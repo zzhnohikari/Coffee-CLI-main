@@ -84,10 +84,7 @@ pub fn load() -> ToolConfig {
 
 pub fn save(cfg: &ToolConfig) -> std::io::Result<()> {
     let Some(p) = config_path() else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "no home dir",
-        ));
+        return Err(std::io::Error::other("no home dir"));
     };
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent)?;

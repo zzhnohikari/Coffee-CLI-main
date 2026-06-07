@@ -1,7 +1,7 @@
 use crate::terminal;
 
 use serde::{Deserialize, Serialize};
-use std::path::{Component, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -813,6 +813,7 @@ fn copy_dir_all(src: &std::path::Path, dest: &std::path::Path) -> std::io::Resul
 /// (the historical pre-v1.10 behaviour). Ignored outside multi-agent
 /// panes. Defaults to false so non-sentinel panes don't auto-chat.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn tier_terminal_start(
     session_id: String,
     tool: Option<String>,
@@ -946,6 +947,7 @@ coffee-cli MCP tools (whoami/list_panes/send_to_pane/read_pane/...) will NOT be 
     .map_err(|e| format!("Spawn task join failed: {e}"))?
 }
 
+#[allow(clippy::too_many_arguments)]
 fn tier_terminal_start_blocking(
     session_id: String,
     tool: Option<String>,
@@ -1366,11 +1368,6 @@ fn tier_terminal_start_blocking(
                 );
             }
         }
-        if tool.as_deref() != Some("claude") && !payload.model.trim().is_empty() {
-            match tool.as_deref() {
-                _ => {}
-            }
-        }
     }
 
     terminal::spawn(
@@ -1610,7 +1607,7 @@ fn parse_agent_jsonl(file_path: &std::path::Path, tool_name: &str) -> Option<Sav
     let mut cwd = String::new();
     let mut updated_at = String::new();
     let mut title = String::new();
-    let mut total_messages = 0;
+    let mut total_messages = 0u32;
 
     for line in reader.lines().map_while(Result::ok) {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
@@ -1708,7 +1705,7 @@ fn parse_agent_jsonl(file_path: &std::path::Path, tool_name: &str) -> Option<Sav
         }
     }
     let turn_count = if total_messages > 0 {
-        std::cmp::max(1, (total_messages + 1) / 2)
+        total_messages.div_ceil(2)
     } else {
         0
     };
@@ -1758,7 +1755,7 @@ fn parse_codex_session_jsonl(file_path: &std::path::Path) -> Option<SavedSession
     let mut cwd = String::new();
     let mut updated_at = String::new();
     let mut title = String::new();
-    let mut total_messages = 0;
+    let mut total_messages = 0u32;
 
     for line in reader.lines().map_while(Result::ok) {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
@@ -1838,7 +1835,7 @@ fn parse_codex_session_jsonl(file_path: &std::path::Path) -> Option<SavedSession
         title = "Codex Session".to_string();
     }
     let turn_count = if total_messages > 0 {
-        std::cmp::max(1, (total_messages + 1) / 2)
+        total_messages.div_ceil(2)
     } else {
         0
     };
@@ -1879,7 +1876,7 @@ fn parse_gemini_session_jsonl(
     let mut cwd = String::new();
     let mut updated_at = String::new();
     let mut title = String::new();
-    let mut total_messages = 0;
+    let mut total_messages = 0u32;
 
     // cwd resolution: file path is `.gemini/tmp/<short>/chats/<file>.jsonl`,
     // so the short project name is the parent's parent dir name.
@@ -1945,7 +1942,7 @@ fn parse_gemini_session_jsonl(
         title = "Gemini Session".to_string();
     }
     let turn_count = if total_messages > 0 {
-        std::cmp::max(1, (total_messages + 1) / 2)
+        total_messages.div_ceil(2)
     } else {
         0
     };
@@ -1979,7 +1976,7 @@ fn parse_qwen_session_jsonl(file_path: &std::path::Path) -> Option<SavedSession>
     let mut cwd = String::new();
     let mut updated_at = String::new();
     let mut title = String::new();
-    let mut total_messages = 0;
+    let mut total_messages = 0u32;
 
     for line in reader.lines().map_while(Result::ok) {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
@@ -2040,7 +2037,7 @@ fn parse_qwen_session_jsonl(file_path: &std::path::Path) -> Option<SavedSession>
         title = "Qwen Session".to_string();
     }
     let turn_count = if total_messages > 0 {
-        std::cmp::max(1, (total_messages + 1) / 2)
+        total_messages.div_ceil(2)
     } else {
         0
     };
@@ -2424,7 +2421,7 @@ fn parse_hermes_json(file_path: &std::path::Path) -> Option<SavedSession> {
     }
 
     let turn_count = if total_messages > 0 {
-        std::cmp::max(1, (total_messages + 1) / 2)
+        total_messages.div_ceil(2)
     } else {
         0
     };
@@ -2695,7 +2692,7 @@ fn load_native_history_blocking() -> Result<Vec<SavedSession>, String> {
     }
 
     // Sort candidates by mtime desc and parse only the newest HISTORY_LIMIT.
-    file_candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    file_candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.0));
     file_candidates.truncate(HISTORY_LIMIT);
 
     // Lazy-load the Gemini project-hash → cwd map only if we actually
@@ -3034,6 +3031,7 @@ fn count_hermes_messages(path: &std::path::Path) -> u32 {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn tier_terminal_resume(
     session_id: String,
     saved_session_id: String, // The UUID of the new terminal tab
@@ -3782,7 +3780,7 @@ pub fn discover_local_skills() -> Result<Vec<SkillOption>, String> {
             });
         }
     }
-    out.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+    out.sort_by_key(|a| a.label.to_lowercase());
     out.dedup_by(|a, b| a.id == b.id);
     Ok(out)
 }
@@ -3830,7 +3828,7 @@ pub fn discover_local_mcp_servers() -> Result<Vec<McpOption>, String> {
         }
     }
 
-    out.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+    out.sort_by_key(|a| a.label.to_lowercase());
     out.dedup_by(|a, b| a.id == b.id);
     Ok(out)
 }
@@ -3898,15 +3896,15 @@ fn ctf_mode_root(root_path: String) -> PathBuf {
     }
 }
 
-fn ctf_mode_launcher(root: &PathBuf) -> PathBuf {
+fn ctf_mode_launcher(root: &Path) -> PathBuf {
     root.join("BreachWeave-local.bat")
 }
 
-fn ctf_mode_stdout_log(root: &PathBuf) -> PathBuf {
+fn ctf_mode_stdout_log(root: &Path) -> PathBuf {
     root.join(".runtime").join("logs").join("web.out.log")
 }
 
-fn ctf_mode_stderr_log(root: &PathBuf) -> PathBuf {
+fn ctf_mode_stderr_log(root: &Path) -> PathBuf {
     root.join(".runtime").join("logs").join("web.err.log")
 }
 

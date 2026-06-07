@@ -460,10 +460,7 @@ pub fn load() -> MultiAgentProfilesConfig {
 
 pub fn save(cfg: &MultiAgentProfilesConfig) -> std::io::Result<()> {
     let Some(path) = config_path() else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "no home dir",
-        ));
+        return Err(std::io::Error::other("no home dir"));
     };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -556,15 +553,11 @@ pub fn load_extra_mcp_servers(path_str: &str) -> Map<String, Value> {
     };
     match value {
         Value::Object(mut root) => {
-            if let Some(v) = root.remove("mcpServers") {
-                if let Value::Object(map) = v {
-                    return map;
-                }
+            if let Some(Value::Object(map)) = root.remove("mcpServers") {
+                return map;
             }
-            if let Some(v) = root.remove("mcp") {
-                if let Value::Object(map) = v {
-                    return map;
-                }
+            if let Some(Value::Object(map)) = root.remove("mcp") {
+                return map;
             }
             root
         }

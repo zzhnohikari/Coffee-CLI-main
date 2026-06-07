@@ -95,16 +95,12 @@ fn main() -> Result<()> {
     // executable still gets the GUI (no argv).
     let args: Vec<String> = std::env::args().collect();
     if let Some(sub) = args.get(1) {
-        match sub.as_str() {
-            "mcp-status" => {
-                attach_terminal_console();
-                return cli::mcp_status();
-            }
-            // Forward-compatible: unknown subcommands fall through
-            // to the GUI rather than failing, so users who type
-            // garbage still get a working app.
-            _ => {}
+        if sub.as_str() == "mcp-status" {
+            attach_terminal_console();
+            return cli::mcp_status();
         }
+        // Forward-compatible: unknown subcommands fall through to the GUI
+        // rather than failing, so users who type garbage still get a working app.
     }
 
     // Default: launch the GUI. Each tab picks its own CWD at

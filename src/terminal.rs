@@ -110,15 +110,12 @@ fn ensure_claude_theme_auto() {
         serde_json::Value::String("auto".to_string()),
     );
 
-    match serde_json::to_string_pretty(&value) {
-        Ok(s) => {
-            if let Err(e) = std::fs::write(&path, format!("{}\n", s)) {
-                eprintln!("[Coffee] could not write claude theme=auto: {}", e);
-            } else {
-                eprintln!("[Coffee] added theme=auto to ~/.claude/settings.json");
-            }
+    if let Ok(s) = serde_json::to_string_pretty(&value) {
+        if let Err(e) = std::fs::write(&path, format!("{}\n", s)) {
+            eprintln!("[Coffee] could not write claude theme=auto: {}", e);
+        } else {
+            eprintln!("[Coffee] added theme=auto to ~/.claude/settings.json");
         }
-        Err(_) => {}
     }
 }
 
@@ -1042,6 +1039,7 @@ pub fn complete_task_via_control(
 /// Used for per-pane config injection where the env var must differ across
 /// concurrent panes (e.g. `OPENCODE_CONFIG` points at a per-pane JSON file).
 /// `std::env::set_var` would race across panes; this is the race-free path.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn(
     app: AppHandle,
     session_id: String,
@@ -2140,14 +2138,13 @@ mod tests {
 
     #[test]
     fn find_preset_known_tools() {
-        for tool in &["claude", "gemini", "hermes"] {
+        for tool in &["claude", "codex", "gemini", "hermes"] {
             assert!(find_preset(tool).is_some(), "preset not found for {tool}");
         }
     }
 
     #[test]
     fn find_preset_unknown_returns_none() {
-        assert!(find_preset("codex").is_none());
         assert!(find_preset("").is_none());
         assert!(find_preset("gpt").is_none());
     }

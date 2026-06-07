@@ -13,6 +13,11 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! cargo tauri --version >/dev/null 2>&1; then
+  echo "cargo-tauri is not installed; installing tauri-cli..." >&2
+  cargo install tauri-cli --locked
+fi
+
 if [ ! -d "src-ui/node_modules" ]; then
   (cd src-ui && npm install)
 fi

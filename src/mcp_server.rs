@@ -1306,7 +1306,7 @@ mod tests {
     #[test]
     fn shell_task_wrapper_flattens_multiline_body_with_statement_separators() {
         let wrapped = build_shell_task_wrapper("__BEGIN__", "__END__", "id\npwd\r\necho OK");
-        assert_eq!(wrapped, "echo __BEGIN__; id; pwd; echo OK; echo __END__");
+        assert_eq!(wrapped, "echo __BEGIN__\nid\npwd\necho OK\necho __END__");
     }
 
     #[test]

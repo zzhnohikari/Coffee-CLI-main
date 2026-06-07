@@ -3,11 +3,11 @@
 //! Same body, three delivery vehicles (decided by `mcp_injector` and
 //! `server::tier_terminal_start_blocking`):
 //!
-//!   - Claude Code -> `--append-system-prompt-file <temp>/claude-system-prompt.md`
-//!   - Codex       -> `-c experimental_instructions_file=<temp>/instructions.md` (text file)
-//!   - Gemini      -> `<temp>/coffee-cli/panes/<pane>/GEMINI.md` referenced by the
-//!                   per-pane Gemini extension manifest's `contextFileName`,
-//!                   loaded into the model's `userMemory` for the session
+//! - Claude Code -> `--append-system-prompt-file <temp>/claude-system-prompt.md`
+//! - Codex       -> `-c experimental_instructions_file=<temp>/instructions.md` (text file)
+//! - Gemini      -> `<temp>/coffee-cli/panes/<pane>/GEMINI.md` referenced by the
+//!   per-pane Gemini extension manifest's `contextFileName`,
+//!   loaded into the model's `userMemory` for the session
 //!
 //! The text inlines the running pane's id; the matching per-pane MCP
 //! server has the same id baked in (`mcp_server::spawn(.., Some(id))`),
