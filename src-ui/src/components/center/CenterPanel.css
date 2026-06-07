@@ -331,7 +331,7 @@
   flex: 1;
   background: var(--bg-card);
   border: none;
-  border-radius: 0;
+  border-radius: var(--shape-radius-panel);
   box-shadow: none;
   padding: 16px 16px 16px 24px;
   display: flex;

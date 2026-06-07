@@ -178,17 +178,17 @@ textarea,
     --shape-border-strength: 1.25;
 }
 
-/* Sharp Terminal — fully flat, VSCode default */
+/* Sharp Terminal — compact hard-edge look, but still rounded */
 [data-shape="sharp"] {
-    --radius-xs: 0px;
-    --radius-sm: 0px;
-    --radius-md: 0px;
-    --radius-lg: 0px;
-    --radius-pill: 0px;
-    --shape-radius-tab: 0;
-    --shape-radius-panel: 0;
-    --shape-radius-btn: 0;
-    --shape-radius-pill: 0;
+    --radius-xs: 2px;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+    --radius-pill: 9999px;
+    --shape-radius-tab: 4px 4px 0 0;
+    --shape-radius-panel: 6px;
+    --shape-radius-btn: 4px;
+    --shape-radius-pill: 9999px;
     --shape-border-strength: 1.5;
 }
 
@@ -645,7 +645,7 @@ body {
     padding: 0;
     color: var(--text-2);
     opacity: 0.6;
-    border-radius: 0;  /* sharp corners — industrial, no chip look */
+    border-radius: var(--shape-radius-btn);
 }
 
 /* 16px glyphs at a 24×24 viewBox. `display: block` kills the 4px
@@ -1386,7 +1386,7 @@ body.gambit-docked {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
     box-shadow: none;
-    border-radius: 0;
+    border-radius: var(--shape-radius-panel);
     overflow: visible;
 }
 
@@ -1670,7 +1670,7 @@ body.gambit-docked {
     padding: 8px 16px;
     margin: 12px 0 16px;
     background: var(--accent-bg);
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    border-radius: var(--radius-sm);
     color: var(--text-2);
     font-style: italic;
 }

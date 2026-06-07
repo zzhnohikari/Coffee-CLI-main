@@ -305,12 +305,12 @@
 
 .screenshot-attach-btn.main-action {
     width: 28px;
-    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+    border-radius: var(--radius-sm);
 }
 
 .screenshot-attach-btn.chevron-action {
     width: 18px;
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    border-radius: var(--radius-sm);
     border-left: 1px solid rgba(255, 255, 255, 0.05);
 }
 

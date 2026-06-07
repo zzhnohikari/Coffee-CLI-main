@@ -692,7 +692,7 @@
   /* Transparent background! The surrounding row (.tree-file.renaming) will provide the highlight! */
   background: transparent;
   border: none;
-  border-radius: 0;
+  border-radius: var(--radius-xs);
   color: var(--text-1, #e8d5c0);
   
   /* Inherit exactly from .tree-file (which is 13px) */
