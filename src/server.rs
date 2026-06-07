@@ -4282,14 +4282,14 @@ pub fn start_ui() -> anyhow::Result<()> {
             // its CLI. Users who never open a multi-agent tab pay
             // zero MCP cost.
 
-            // The frameless window relies on CSS-rounded transparent corners.
-            // Set both the native window and WebView backing surface to clear
-            // so the clipped corners do not expose WKWebView/WebView2's
-            // default white background.
+            // The frameless window is CSS-rounded, but WKWebView/WebView2 can
+            // still expose its default white backing layer around the outer
+            // edge. Seed both native window and WebView with the default dark
+            // app colour; the frontend theme then paints over it normally.
             {
                 use tauri::{window::Color, Manager};
                 if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
+                    let _ = window.set_background_color(Some(Color(26, 25, 23, 255)));
                 }
             }
 

@@ -572,7 +572,7 @@ html {
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background: transparent;
+    background: var(--bg-app);
     border-radius: var(--window-radius);
 }
 
@@ -582,13 +582,12 @@ body {
     margin: 0;
     font-family: var(--font);
     font-size: 14px;
-    /* No bg here — moved to #root so the rounded clip on #root
-       fully owns where the app's surface paints. Body with both
-       a bg AND clip-path was leaking square corners in non-Glass
-       themes (WebView2 promoted body's bg to its own GPU layer,
-       sidestepping clip-path). Glass already painted on #root,
-       which is why only Glass appeared rounded. */
-    background: transparent;
+    /* Paint the native/WebView backing area with the app surface colour.
+       Transparent rounded corners looked correct on some desktops but
+       showed as a white rectangular fringe on macOS screenshots and
+       WKWebView backing layers. #root still owns the internal rounded
+       app clip; html/body just prevent any white canvas from leaking. */
+    background: var(--bg-app);
     border-radius: var(--window-radius);
     color: var(--text-1);
     overflow: hidden;
@@ -602,8 +601,8 @@ body {
    for ALL themes. Bg is `--bg-app` by default; Glass overrides
    it to `--glass-tint` (translucent) further down. clip-path
    gives a hard 10px rounded clip that no descendant stacking
-   context can leak past — the 4 corner cut-outs show OS desktop
-   through Tauri's transparent window. */
+   context can leak past. html/body carry the same bg colour behind it
+   so the outer backing layer never flashes white. */
 #root {
     width: 100%;
     height: 100%;
