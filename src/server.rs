@@ -18,6 +18,17 @@ fn merge_prompt_sections(base: &str, extra: &str) -> String {
     }
 }
 
+fn log_spawn_isolation_env(extra_env: &[(String, String)]) {
+    let filtered: Vec<String> = extra_env
+        .iter()
+        .filter(|(k, _)| matches!(k.as_str(), "CODEX_HOME" | "OPENCODE_CONFIG"))
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect();
+    if !filtered.is_empty() {
+        eprintln!("[Tier Terminal] Isolation env: {:?}", filtered);
+    }
+}
+
 fn pane_profile_overlay_root() -> std::path::PathBuf {
     std::env::temp_dir()
         .join("coffee-cli")
@@ -1326,29 +1337,10 @@ fn tier_terminal_start_blocking(
         tool, cmd, args, spawn_cwd
     );
 
-    // Per-pane env overrides. OpenCode reads its MCP config from
-    // `OPENCODE_CONFIG=<path>` (no equivalent CLI flag in 1.14), so the
-    // per-pane wiring lands here rather than in the argv match above.
-    // Other CLIs leave this empty.
+    // Per-pane env overrides. User/profile env lands first; Coffee's own
+    // isolation env lands last so a profile cannot accidentally redirect a
+    // pane back to the user's global Codex/OpenCode config.
     let mut extra_env: Vec<(String, String)> = Vec::new();
-    if let Some(p) = pane_paths
-        .as_ref()
-        .and_then(|pp| pp.opencode_config_path.as_ref())
-    {
-        extra_env.push(("OPENCODE_CONFIG".to_string(), p.display().to_string()));
-    }
-    if let Some(p) = pane_paths
-        .as_ref()
-        .and_then(|pp| pp.codex_home_path.as_ref())
-    {
-        extra_env.push(("CODEX_HOME".to_string(), p.display().to_string()));
-    }
-    if let Some(p) = pane_paths
-        .as_ref()
-        .and_then(|pp| pp.codex_home_path.as_ref())
-    {
-        extra_env.push(("CODEX_HOME".to_string(), p.display().to_string()));
-    }
     if let Some(payload) = pane_launch_payload.as_ref() {
         for (k, v) in &payload.env {
             extra_env.push((k.clone(), v.clone()));
@@ -1376,6 +1368,19 @@ fn tier_terminal_start_blocking(
             }
         }
     }
+    if let Some(p) = pane_paths
+        .as_ref()
+        .and_then(|pp| pp.opencode_config_path.as_ref())
+    {
+        extra_env.push(("OPENCODE_CONFIG".to_string(), p.display().to_string()));
+    }
+    if let Some(p) = pane_paths
+        .as_ref()
+        .and_then(|pp| pp.codex_home_path.as_ref())
+    {
+        extra_env.push(("CODEX_HOME".to_string(), p.display().to_string()));
+    }
+    log_spawn_isolation_env(&extra_env);
 
     terminal::spawn(
         app.clone(),
@@ -3156,6 +3161,13 @@ fn tier_terminal_resume(
     {
         extra_env.push(("OPENCODE_CONFIG".to_string(), p.display().to_string()));
     }
+    if let Some(p) = pane_paths
+        .as_ref()
+        .and_then(|pp| pp.codex_home_path.as_ref())
+    {
+        extra_env.push(("CODEX_HOME".to_string(), p.display().to_string()));
+    }
+    log_spawn_isolation_env(&extra_env);
 
     let actual_cwd = cwd.clone();
     let emit_session_id = saved_session_id.clone();
@@ -4194,8 +4206,8 @@ pub async fn ensure_pane_mcp_running(
 /// / Gemini extension stub) are all created lazily inside
 /// `tier_terminal_start` when each pane spawns its CLI. No workspace
 /// files are written, no global `~/.codex` / `~/.gemini` `mcp_servers`
-/// blocks get injected, no env var redirects the CLI's HOME (so auth
-/// stays live).
+/// blocks get injected. Codex panes use an isolated `CODEX_HOME` with
+/// copied auth, so profile config stays scoped without breaking login.
 ///
 /// The frontend still calls this on tab mount as a structured place
 /// for cross-cutting validation (workspace must exist, future license
