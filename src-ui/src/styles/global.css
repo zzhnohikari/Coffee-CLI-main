@@ -210,17 +210,17 @@ textarea,
     --glass-blur: blur(24px) saturate(160%);
 }
 
-/* Panel — flat + hard dividers (tmux/老终端) */
+/* Panel — flat dividers with rounded chrome */
 [data-shape="panel"] {
-    --radius-xs: 0px;
-    --radius-sm: 0px;
-    --radius-md: 0px;
-    --radius-lg: 0px;
-    --radius-pill: 0px;
-    --shape-radius-tab: 0;
-    --shape-radius-panel: 0;
-    --shape-radius-btn: 0;
-    --shape-radius-pill: 0;
+    --radius-xs: 4px;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-pill: 9999px;
+    --shape-radius-tab: 8px 8px 0 0;
+    --shape-radius-panel: 12px;
+    --shape-radius-btn: 8px;
+    --shape-radius-pill: 9999px;
     --shape-border-strength: 2;
 }
 
@@ -795,7 +795,7 @@ body {
     flex-direction: column;
     min-height: 0;       /* WebView2 flex fix */
     background: var(--bg-panel);
-    border-radius: 0; /* Remove rounded corners for flush design */
+    border-radius: var(--shape-radius-panel);
     border: none; /* Rely on hairline dividers instead */
     /* backdrop-filter removed from base — too expensive on transparent windows.
        Only panels with semi-transparent backgrounds should use it (panel-left). */
@@ -2433,7 +2433,7 @@ body.gambit-docked {
 [data-shape="panel"] .explorer-tab,
 [data-shape="panel"] .right-tab {
     padding: 8px 0;
-    border-radius: 0;
+    border-radius: var(--shape-radius-btn);
 }
 
 [data-shape="panel"] .explorer-tab + .explorer-tab,
@@ -2492,7 +2492,7 @@ body.gambit-docked {
    bordered rectangle look as the Library/Agents page so the two
    tool-selection surfaces read as one design language. */
 [data-shape="panel"] .launchpad-card-group {
-    border-radius: 0;
+    border-radius: var(--shape-radius-panel);
     box-shadow: none;
     border: 1px solid var(--border);
     transition: background-color 0.15s, border-color 0.15s;

@@ -301,12 +301,12 @@ const THEME_COLORS: { code: ThemeColor; labelKey: string; swatch: string; ring: 
   { code: 'moss',       labelKey: 'theme.color.moss',       swatch: '#0b1612', ring: '#6a9878' },
 ];
 
-const THEME_SHAPES: { code: ThemeShape; label: string }[] = [
-  { code: 'soft',  label: 'Soft'  },
-  { code: 'slab',  label: 'Slab'  },
-  { code: 'sharp', label: 'Sharp' },
-  { code: 'glass', label: 'Glass' },
-  { code: 'panel', label: 'Panel' },
+const THEME_SHAPES: { code: ThemeShape; labelKey: string }[] = [
+  { code: 'soft',  labelKey: 'theme.shape.soft'  },
+  { code: 'slab',  labelKey: 'theme.shape.slab'  },
+  { code: 'sharp', labelKey: 'theme.shape.sharp' },
+  { code: 'glass', labelKey: 'theme.shape.glass' },
+  { code: 'panel', labelKey: 'theme.shape.panel' },
 ];
 
 import { TERM_COLOR_SCHEMES } from '../center/TierTerminal';
@@ -388,7 +388,7 @@ function ThemeMenu({ anchorRef, currentTheme, currentShape, currentIconTheme, ha
             className={`theme-shape-chip ${s.code === currentShape ? 'active' : ''}`}
             onClick={() => onSelectShape(s.code)}
           >
-            {s.label}
+            {t(s.labelKey as any)}
           </button>
         ))}
       </div>

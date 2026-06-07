@@ -490,7 +490,7 @@ function EmptyPanePicker({
     const apiKey = await commands.loadApiKey(profileId).catch(() => null);
     setDraftApiKey(apiKey || '');
     const status = await commands.getApiKeyStatus(profileId).catch(() => null);
-    setApiKeyStatus(status?.message || (apiKey ? 'API Key: Saved' : 'API Key: Missing'));
+    setApiKeyStatus(status?.message || (apiKey ? t('profile.api_key_saved' as any) : t('profile.api_key_missing' as any)));
   };
 
   const saveProfile = async () => {
@@ -517,7 +517,7 @@ function EmptyPanePicker({
       setApiKeyStatus(status.message);
     } else {
       await commands.deleteApiKey(id).catch(() => {});
-      setApiKeyStatus('API Key: Missing');
+      setApiKeyStatus(t('profile.api_key_missing' as any));
     }
     setProfilesCfg(next);
     resetProfileEditor();
@@ -612,7 +612,7 @@ function EmptyPanePicker({
           <div className="empty-pane-history-title">
             <span>{toolLabel}</span>
             <span className="empty-pane-history-title-sep">?</span>
-            <span>Profiles</span>
+            <span>{t('profile.profiles' as any)}</span>
           </div>
           <button
             type="button"
@@ -638,7 +638,7 @@ function EmptyPanePicker({
               startCreateProfile();
             }}
           >
-            + New Profile
+            {t('profile.new' as any)}
           </button>
         </div>
 
@@ -648,33 +648,33 @@ function EmptyPanePicker({
               <div className="empty-pane-profile-editor">
             <div className="empty-pane-profile-section">
               <button type="button" className="empty-pane-profile-section-head" onClick={() => setOpenSection(openSection === 'basic' ? null : 'basic')}>
-                <span>Basic Launch</span>
+                <span>{t('profile.basic_launch' as any)}</span>
                 <span>{openSection === 'basic' ? '-' : '+'}</span>
               </button>
               {openSection === 'basic' && (
                 <div className="empty-pane-profile-section-body">
-                  <input type="text" className="empty-pane-history-search" value={draftProfileId} placeholder="profile id" onChange={(e) => setDraftProfileId(e.target.value)} />
-                  <input type="text" className="empty-pane-history-search" value={draftProfile.label} placeholder="label" onChange={(e) => setDraftProfile({ ...draftProfile, label: e.target.value })} />
-                  <input type="text" className="empty-pane-history-search" value={draftProfile.command} placeholder="command override" onChange={(e) => setDraftProfile({ ...draftProfile, command: e.target.value })} />
-                  <textarea className="empty-pane-history-search empty-pane-profile-textarea" value={(draftProfile.extraArgs || []).join('\n')} placeholder="extra args, one per line" onChange={(e) => setDraftProfile({ ...draftProfile, extraArgs: e.target.value.split('\n').map((x) => x.trim()).filter(Boolean) })} />
+                  <input type="text" className="empty-pane-history-search" value={draftProfileId} placeholder={t('profile.profile_id' as any)} onChange={(e) => setDraftProfileId(e.target.value)} />
+                  <input type="text" className="empty-pane-history-search" value={draftProfile.label} placeholder={t('profile.label' as any)} onChange={(e) => setDraftProfile({ ...draftProfile, label: e.target.value })} />
+                  <input type="text" className="empty-pane-history-search" value={draftProfile.command} placeholder={t('profile.command_override' as any)} onChange={(e) => setDraftProfile({ ...draftProfile, command: e.target.value })} />
+                  <textarea className="empty-pane-history-search empty-pane-profile-textarea" value={(draftProfile.extraArgs || []).join('\n')} placeholder={t('profile.extra_args' as any)} onChange={(e) => setDraftProfile({ ...draftProfile, extraArgs: e.target.value.split('\n').map((x) => x.trim()).filter(Boolean) })} />
                 </div>
               )}
             </div>
 
             <div className="empty-pane-profile-section">
               <button type="button" className="empty-pane-profile-section-head" onClick={() => setOpenSection(openSection === 'model' ? null : 'model')}>
-                <span>Model Access</span>
+                <span>{t('profile.model_access' as any)}</span>
                 <span>{openSection === 'model' ? '-' : '+'}</span>
               </button>
               {openSection === 'model' && (
                 <div className="empty-pane-profile-section-body">
-                  <input type="text" className="empty-pane-history-search" value={draftProfile.apiKeyEnvName || ''} placeholder="api key env name, e.g. OPENAI_API_KEY" onChange={(e) => setDraftProfile({ ...draftProfile, apiKeyEnvName: e.target.value })} />
-                  <input type="password" className="empty-pane-history-search" value={draftApiKey} placeholder="api key (stored in OS keychain or fallback file)" onChange={(e) => setDraftApiKey(e.target.value)} />
+                  <input type="text" className="empty-pane-history-search" value={draftProfile.apiKeyEnvName || ''} placeholder={t('profile.api_key_env' as any)} onChange={(e) => setDraftProfile({ ...draftProfile, apiKeyEnvName: e.target.value })} />
+                  <input type="password" className="empty-pane-history-search" value={draftApiKey} placeholder={t('profile.api_key' as any)} onChange={(e) => setDraftApiKey(e.target.value)} />
                   <div className="empty-pane-profile-helptext">{apiKeyStatus}</div>
-                  <input type="text" className="empty-pane-history-search" value={draftProfile.apiBaseUrlEnvName || ''} placeholder="base url env name, e.g. OPENAI_BASE_URL" onChange={(e) => setDraftProfile({ ...draftProfile, apiBaseUrlEnvName: e.target.value })} />
-                  <input type="text" className="empty-pane-history-search" value={draftProfile.apiBaseUrl || ''} placeholder="base url, e.g. https://your-proxy.example/v1" onChange={(e) => setDraftProfile({ ...draftProfile, apiBaseUrl: e.target.value })} />
-                  <input type="text" className="empty-pane-history-search" value={draftProfile.model || ''} placeholder="model, e.g. deepseek-v4-pro" onChange={(e) => setDraftProfile({ ...draftProfile, model: e.target.value })} />
-                  <textarea className="empty-pane-history-search empty-pane-profile-textarea" value={Object.entries(draftProfile.env || {}).map(([k, v]) => `${k}=${v}`).join('\n')} placeholder="extra env, one KEY=VALUE per line" onChange={(e) => {
+                  <input type="text" className="empty-pane-history-search" value={draftProfile.apiBaseUrlEnvName || ''} placeholder={t('profile.base_url_env' as any)} onChange={(e) => setDraftProfile({ ...draftProfile, apiBaseUrlEnvName: e.target.value })} />
+                  <input type="text" className="empty-pane-history-search" value={draftProfile.apiBaseUrl || ''} placeholder={t('profile.base_url' as any)} onChange={(e) => setDraftProfile({ ...draftProfile, apiBaseUrl: e.target.value })} />
+                  <input type="text" className="empty-pane-history-search" value={draftProfile.model || ''} placeholder={t('profile.model' as any)} onChange={(e) => setDraftProfile({ ...draftProfile, model: e.target.value })} />
+                  <textarea className="empty-pane-history-search empty-pane-profile-textarea" value={Object.entries(draftProfile.env || {}).map(([k, v]) => `${k}=${v}`).join('\n')} placeholder={t('profile.extra_env' as any)} onChange={(e) => {
                     const env: Record<string, string> = {};
                     for (const line of e.target.value.split('\n')) {
                       const trimmed = line.trim();
@@ -691,7 +691,7 @@ function EmptyPanePicker({
 
             <div className="empty-pane-profile-section">
               <button type="button" className="empty-pane-profile-section-head" onClick={() => setOpenSection(openSection === 'advanced' ? null : 'advanced')}>
-                <span>Advanced</span>
+                <span>{t('profile.advanced' as any)}</span>
                 <span>{openSection === 'advanced' ? '-' : '+'}</span>
               </button>
               {openSection === 'advanced' && (
@@ -699,7 +699,7 @@ function EmptyPanePicker({
                   <div className="empty-pane-profile-advanced-grid">
                     <div className="empty-pane-profile-picklist empty-pane-profile-picklist--tall">
                       <div className="empty-pane-profile-picklist-title">MCP</div>
-                      <input type="text" className="empty-pane-history-search" value={draftProfile.mcpConfigPath} placeholder="mcp config path" onChange={(e) => setDraftProfile({ ...draftProfile, mcpConfigPath: e.target.value })} />
+                      <input type="text" className="empty-pane-history-search" value={draftProfile.mcpConfigPath} placeholder={t('profile.mcp_config_path' as any)} onChange={(e) => setDraftProfile({ ...draftProfile, mcpConfigPath: e.target.value })} />
                       <div className="empty-pane-profile-pills empty-pane-profile-pills--scroll">
                         {mcpOptions.map((mcp) => {
                           const checked = (draftProfile.selectedMcpIds || []).includes(mcp.id);
@@ -721,12 +721,12 @@ function EmptyPanePicker({
                         })}
                       </div>
                       <div className="empty-pane-profile-helptext">
-                        Checked MCP servers will be written into a temporary config file automatically when you save this profile.
+                        {t('profile.mcp_help' as any)}
                       </div>
                     </div>
 
                     <div className="empty-pane-profile-picklist empty-pane-profile-picklist--tall">
-                      <div className="empty-pane-profile-picklist-title">Skills</div>
+                      <div className="empty-pane-profile-picklist-title">{t('profile.skills' as any)}</div>
                       <div className="empty-pane-profile-pills empty-pane-profile-pills--scroll">
                         {skillOptions.map((skill) => {
                           const checked = (draftProfile.skills || []).includes(skill.id);
@@ -750,21 +750,21 @@ function EmptyPanePicker({
                     </div>
                   </div>
 
-                  <textarea className="empty-pane-history-search empty-pane-profile-textarea" value={draftProfile.promptAppend} placeholder="prompt append" onChange={(e) => setDraftProfile({ ...draftProfile, promptAppend: e.target.value })} />
-                  <input type="text" className="empty-pane-history-search" value={draftProfile.promptFilePath} placeholder="prompt file path" onChange={(e) => setDraftProfile({ ...draftProfile, promptFilePath: e.target.value })} />
-                  <textarea className="empty-pane-history-search empty-pane-profile-textarea" value={draftProfile.startupInput} placeholder="startup input" onChange={(e) => setDraftProfile({ ...draftProfile, startupInput: e.target.value })} />
-                  <textarea className="empty-pane-history-search empty-pane-profile-textarea" value={draftProfile.notes} placeholder="notes" onChange={(e) => setDraftProfile({ ...draftProfile, notes: e.target.value })} />
+                  <textarea className="empty-pane-history-search empty-pane-profile-textarea" value={draftProfile.promptAppend} placeholder={t('profile.prompt_append' as any)} onChange={(e) => setDraftProfile({ ...draftProfile, promptAppend: e.target.value })} />
+                  <input type="text" className="empty-pane-history-search" value={draftProfile.promptFilePath} placeholder={t('profile.prompt_file_path' as any)} onChange={(e) => setDraftProfile({ ...draftProfile, promptFilePath: e.target.value })} />
+                  <textarea className="empty-pane-history-search empty-pane-profile-textarea" value={draftProfile.startupInput} placeholder={t('profile.startup_input' as any)} onChange={(e) => setDraftProfile({ ...draftProfile, startupInput: e.target.value })} />
+                  <textarea className="empty-pane-history-search empty-pane-profile-textarea" value={draftProfile.notes} placeholder={t('profile.notes' as any)} onChange={(e) => setDraftProfile({ ...draftProfile, notes: e.target.value })} />
                   <label className="empty-pane-profile-checkbox">
                     <input type="checkbox" checked={draftProfile.sentinel !== false} onChange={(e) => setDraftProfile({ ...draftProfile, sentinel: e.target.checked })} />
-                    <span>Enable sentinel by default</span>
+                    <span>{t('profile.enable_sentinel' as any)}</span>
                   </label>
                 </div>
               )}
             </div>
 
             <div className="empty-pane-profile-actions">
-              <button type="button" className="empty-pane-option empty-pane-option--secondary" onClick={(e) => { e.stopPropagation(); resetProfileEditor(); }}>Cancel</button>
-              <button type="button" className="empty-pane-option empty-pane-option--primary" onClick={(e) => { e.stopPropagation(); void saveProfile(); }}>Save Profile</button>
+              <button type="button" className="empty-pane-option empty-pane-option--secondary" onClick={(e) => { e.stopPropagation(); resetProfileEditor(); }}>{t('profile.cancel' as any)}</button>
+              <button type="button" className="empty-pane-option empty-pane-option--primary" onClick={(e) => { e.stopPropagation(); void saveProfile(); }}>{t('profile.save_profile' as any)}</button>
             </div>
               </div>
             </div>
@@ -775,7 +775,7 @@ function EmptyPanePicker({
         <div className="empty-pane-history-list">
           {profileEntries.length === 0 ? (
             <div className="empty-pane-history-empty">
-              No profile found for {toolLabel}
+              {t('profile.none_found' as any, { tool: toolLabel })}
             </div>
           ) : (
             profileEntries.map(([profileId, profile]) => (
@@ -791,7 +791,7 @@ function EmptyPanePicker({
                 >
                   <span className="empty-pane-history-item-title">{profile.label || profileId}</span>
                   <span className="empty-pane-history-item-meta">
-                    {profile.skills?.length ? `skills: ${profile.skills.join(', ')}` : 'custom launch profile'}
+                    {profile.skills?.length ? t('profile.skills_prefix' as any, { skills: profile.skills.join(', ') }) : t('profile.custom_launch' as any)}
                   </span>
                   <span className="empty-pane-history-item-cwd">
                     {profile.notes || profile.command || profile.promptFilePath || ''}
@@ -806,7 +806,7 @@ function EmptyPanePicker({
                       startEditProfile(profileId, profile);
                     }}
                   >
-                    Edit
+                    {t('profile.edit' as any)}
                   </button>
                   <button
                     type="button"
@@ -816,7 +816,7 @@ function EmptyPanePicker({
                       void deleteProfile(profileId);
                     }}
                   >
-                    Delete
+                    {t('profile.delete' as any)}
                   </button>
                 </div>
               </div>
@@ -868,7 +868,7 @@ function EmptyPanePicker({
                   setProfileTool(opt.value);
                 }}
               >
-                Profiles
+                {t('profile.profiles' as any)}
               </button>
             </div>
           );
@@ -880,7 +880,7 @@ function EmptyPanePicker({
           role="button"
           tabIndex={0}
           aria-pressed={sentinelEnabled}
-          aria-label="Toggle sentinel protocol"
+          aria-label={t('profile.toggle_sentinel' as any)}
           onClick={(e) => { e.stopPropagation(); onToggleSentinel(); }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {

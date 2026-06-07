@@ -1401,7 +1401,7 @@ export function CtfModePanel({ tab, hasBg, bgUrl, bgType }: Props) {
           <textarea
             value={config.operatorPrompt}
             onChange={(e) => persistConfig({ ...config, operatorPrompt: e.target.value })}
-            placeholder="Example: prefer Web black-box; avoid blind fuzzing; always output RESULT + DONE"
+            placeholder="例如：优先 Web 黑盒；避免盲目 fuzz；每次输出 RESULT + DONE"
             rows={4}
             style={{ width: '100%', padding: '9px 10px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: 'inherit', resize: 'vertical' }}
           />
@@ -1442,18 +1442,18 @@ export function CtfModePanel({ tab, hasBg, bgUrl, bgType }: Props) {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
             <button onClick={() => openPresetEditor()} disabled={!selectedPreset} style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}>
-              Edit Template
+              编辑模板
             </button>
             <button onClick={openCustomPresetEditor} disabled={!profilesCfg} style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: 'inherit', cursor: 'pointer' }}>
-              New Template
+              新建模板
             </button>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
             <button onClick={handleUseCompatiblePreset} disabled={!compatiblePresetId || compatiblePresetId === config.teamPresetId} style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: 'inherit', cursor: 'pointer', opacity: compatiblePresetId && compatiblePresetId !== config.teamPresetId ? 1 : 0.6 }}>
-              Compatible Mode
+              兼容模式
             </button>
             <button onClick={handleDeleteSelectedPreset} disabled={!config.teamPresetId.startsWith('ctf-custom-')} style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: 'inherit', cursor: 'pointer', opacity: config.teamPresetId.startsWith('ctf-custom-') ? 1 : 0.5 }}>
-              Delete Template
+              删除模板
             </button>
           </div>
           {editingPreset ? (
@@ -1461,9 +1461,9 @@ export function CtfModePanel({ tab, hasBg, bgUrl, bgType }: Props) {
               <input value={presetDraft.id} onChange={(e) => setPresetDraft((d) => ({ ...d, id: e.target.value }))} placeholder="模板ID，例如 ctf-custom-no-gemini" style={{ width: '100%', padding: '8px 10px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: 'inherit' }} />
               <input value={presetDraft.label} onChange={(e) => setPresetDraft((d) => ({ ...d, label: e.target.value }))} placeholder="模板名称" style={{ width: '100%', padding: '8px 10px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: 'inherit' }} />
               <select value={presetDraft.layout} onChange={(e) => setPresetDraft((d) => ({ ...d, layout: e.target.value as CtfPresetDraft['layout'] }))} style={{ width: '100%', padding: '8px 10px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: 'inherit' }}>
-                <option value="two-agent">2 Agent</option>
-                <option value="three-agent">3 Agent</option>
-                <option value="multi-agent">4 Agent</option>
+                <option value="two-agent">2 智能体</option>
+                <option value="three-agent">3 智能体</option>
+                <option value="multi-agent">4 智能体</option>
               </select>
               {[1, 2, 3, 4].map((idx) => {
                 const key = (`pane${idx}` as keyof CtfPresetDraft);
@@ -1476,7 +1476,7 @@ export function CtfModePanel({ tab, hasBg, bgUrl, bgType }: Props) {
                     disabled={disabled}
                     style={{ width: '100%', padding: '8px 10px', background: disabled ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: 'inherit', opacity: disabled ? 0.55 : 1 }}
                   >
-                    <option value="">Pane {idx} 未使用</option>
+                    <option value="">面板 {idx} 未使用</option>
                     {ctfProfileOptions.map((opt) => (
                       <option key={`${idx}-${opt.id}`} value={opt.id}>
                         {opt.label} · {opt.tool}{opt.installed ? '' : ' (缺失)'}

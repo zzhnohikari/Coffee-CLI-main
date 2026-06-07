@@ -6,7 +6,7 @@
   overflow: hidden;
   background: var(--bg-terminal);
   border-top: none;
-  border-radius: 0; /* Fully flush, edge to edge */
+  border-radius: var(--shape-radius-panel);
 }
 
 .chrome-tabs-header {

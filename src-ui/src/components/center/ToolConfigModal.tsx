@@ -133,7 +133,7 @@ export function ToolConfigModal({ toolKey, toolLabel, onClose }: Props) {
       <div onClick={e => e.stopPropagation()} className="tool-config-modal">
         <div className="tool-config-header">
           <span>{toolLabel}</span>
-          <button onClick={onClose} className="tool-config-close" aria-label="close">×</button>
+          <button onClick={onClose} className="tool-config-close" aria-label={t('action.close' as any)}>×</button>
         </div>
 
         {!loading && (

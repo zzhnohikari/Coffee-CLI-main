@@ -138,7 +138,7 @@
      Chrome 111 / Safari 16.4; Tauri's WebView2 is Edge-based and
      supports it. Fallback uses the raw accent — acceptable. */
   background: color-mix(in srgb, var(--accent, #6cc275) 55%, #000);
-  border-radius: 0;
+  border-radius: var(--radius-sm);
   border: none;
   padding: 0;
   font-size: 14px;

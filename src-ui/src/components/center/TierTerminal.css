@@ -91,7 +91,7 @@
 }
 
 .tier-xterm .xterm-viewport {
-    border-radius: 0;
+    border-radius: var(--shape-radius-panel, 10px);
     background: transparent !important;
 }
 

@@ -1594,7 +1594,7 @@ export function CenterPanel() {
                                 {hasGear && (
                                   <span
                                     className="library-gear-btn"
-                                    title="Configure launch path / args"
+                                    title={t('profile.configure_launch' as any)}
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       setConfigModalTool({ key: item.key as string, label: item.label });
