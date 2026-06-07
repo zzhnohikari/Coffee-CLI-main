@@ -120,6 +120,7 @@ textarea,
     --font: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Noto Sans SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
     --font-serif: 'Lora', ui-serif, Georgia, Cambria, "Times New Roman", 'PingFang SC', 'Noto Sans SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
     --mono: 'Cascadia Code', 'Cascadia Mono', 'SF Mono', Menlo, Monaco, Consolas, 'Courier New', monospace;
+    --window-radius: 14px;
     --radius-xs: 4px;
     --radius-sm: 8px;
     --radius-md: 16px;
@@ -568,12 +569,15 @@ textarea,
    Without height:100% on every flex ancestor, child flex:1 resolves to 0
    and tab content becomes invisible. */
 html {
+    width: 100%;
     height: 100%;
     overflow: hidden;
     background: transparent;
+    border-radius: var(--window-radius);
 }
 
 body {
+    width: 100%;
     height: 100%;
     margin: 0;
     font-family: var(--font);
@@ -585,6 +589,7 @@ body {
        sidestepping clip-path). Glass already painted on #root,
        which is why only Glass appeared rounded. */
     background: transparent;
+    border-radius: var(--window-radius);
     color: var(--text-1);
     overflow: hidden;
     -webkit-font-smoothing: antialiased;
@@ -600,13 +605,15 @@ body {
    context can leak past — the 4 corner cut-outs show OS desktop
    through Tauri's transparent window. */
 #root {
+    width: 100%;
     height: 100%;
     background: var(--bg-app);
-    border-radius: 10px;
-    clip-path: inset(0 round 10px);
+    border-radius: var(--window-radius);
+    clip-path: inset(0 round var(--window-radius));
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    isolation: isolate;
 }
 
 

@@ -4282,6 +4282,17 @@ pub fn start_ui() -> anyhow::Result<()> {
             // its CLI. Users who never open a multi-agent tab pay
             // zero MCP cost.
 
+            // The frameless window relies on CSS-rounded transparent corners.
+            // Set both the native window and WebView backing surface to clear
+            // so the clipped corners do not expose WKWebView/WebView2's
+            // default white background.
+            {
+                use tauri::{window::Color, Manager};
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
+                }
+            }
+
             // ── Bulletproof window-reveal fallback ──────────────────
             // The window is created with `visible: false` so the user
             // never sees the platform's chrome flash — main.tsx
@@ -4320,31 +4331,14 @@ pub fn start_ui() -> anyhow::Result<()> {
                 });
             }
 
-            // Force square corners + no shadow on the borderless window.
-            // Windows 11's DWM rounds borderless windows by default and adds
-            // a subtle drop-shadow; both create the visible "edge ring" we
-            // want gone for the flat look.
+            // Keep the borderless window shadowless on Windows. Do not force
+            // square DWM corners: the app chrome is now intentionally rounded
+            // and the transparent WebView corners carry that shape.
             #[cfg(target_os = "windows")]
             {
                 use tauri::Manager;
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.set_shadow(false);
-                    if let Ok(hwnd) = window.hwnd() {
-                        unsafe {
-                            use windows::Win32::Foundation::HWND;
-                            use windows::Win32::Graphics::Dwm::{
-                                DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE,
-                                DWMWCP_DONOTROUND,
-                            };
-                            let pref: i32 = DWMWCP_DONOTROUND.0;
-                            let _ = DwmSetWindowAttribute(
-                                HWND(hwnd.0 as *mut _),
-                                DWMWA_WINDOW_CORNER_PREFERENCE,
-                                &pref as *const _ as *const _,
-                                std::mem::size_of_val(&pref) as u32,
-                            );
-                        }
-                    }
                 }
             }
 
