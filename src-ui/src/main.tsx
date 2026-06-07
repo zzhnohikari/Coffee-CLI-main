@@ -12,6 +12,17 @@ const appTree = (
   </AppProvider>
 );
 
+if (typeof document !== 'undefined') {
+  const platform = navigator.platform.toLowerCase();
+  const userAgent = navigator.userAgent.toLowerCase();
+  const os = platform.includes('mac') || userAgent.includes('mac os')
+    ? 'macos'
+    : platform.includes('win') || userAgent.includes('windows')
+      ? 'windows'
+      : 'linux';
+  document.documentElement.setAttribute('data-platform', os);
+}
+
 // In development, React.StrictMode intentionally double-invokes mount/unmount
 // lifecycles. That's useful for ordinary UI components, but disastrous for our
 // PTY-backed terminals because a single pane mount can become:
