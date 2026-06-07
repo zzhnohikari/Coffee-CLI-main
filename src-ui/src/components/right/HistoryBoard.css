@@ -1,0 +1,137 @@
+/* ── History Card (Recent Sessions) ──
+   All visible colors come from theme variables — same fix as ChatReader
+   (issue #21). Earlier the cards/search/skeleton used hard-coded white
+   half-transparent layers (rgba(255,255,255,0.03) etc.) which collapsed
+   to "almost invisible" on the light theme since white-on-white has no
+   contrast. */
+
+.history-card {
+  padding: 12px 14px;
+  margin-bottom: 6px;
+  cursor: default !important;
+  background: var(--bg-card);
+  border-radius: var(--radius-sm);
+  transition: background 0.2s, transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.history-card:hover {
+  transform: translateY(-1px);
+  background: var(--bg-hover);
+}
+
+.history-card:active {
+  transform: scale(0.98);
+}
+
+.history-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-card-title {
+  font-size: 13px;
+  color: var(--text-1);
+  font-family: var(--font, system-ui);
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.history-card-tool-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--text-2);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.history-card-time {
+  font-size: 10px;
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+/* ── Loading Skeleton ──
+   Shimmer driven by --text-3 so the skeleton bars are visible against
+   light AND dark cards. Pure white-rgba was invisible on the light theme. */
+.history-card-skeleton {
+  cursor: default !important;
+  pointer-events: none;
+  background: var(--bg-card);
+  opacity: 0.6;
+}
+
+.skeleton-bar {
+  display: block;
+  border-radius: var(--radius-xs, 4px);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--text-3) 18%, transparent) 0%,
+    color-mix(in srgb, var(--text-3) 35%, transparent) 50%,
+    color-mix(in srgb, var(--text-3) 18%, transparent) 100%
+  );
+  background-size: 200% 100%;
+  animation: history-skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-bar-title {
+  width: 70%;
+  height: 13px;
+}
+
+.skeleton-bar-meta {
+  width: 40%;
+  height: 10px;
+}
+
+@keyframes history-skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.agent-session-search-wrap {
+  position: relative;
+  margin-bottom: 12px;
+}
+
+.agent-session-search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+}
+
+.agent-session-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px 8px 32px;
+  color: var(--text-1);
+  font-size: 13px;
+  font-family: var(--font, system-ui);
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.agent-session-search::placeholder {
+  color: var(--text-3);
+}
+
+.agent-session-search:focus {
+  background: var(--bg-hover);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}

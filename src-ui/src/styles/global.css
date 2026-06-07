@@ -1,0 +1,2452 @@
+/* ═══════════════════════════════════════════════════════
+   Coffee CLI — 3-Panel IDE App Styling
+   Theme: Claude (Warm Dark) & Codex (Light Glass)
+   ═══════════════════════════════════════════════════════ */
+
+/* ─── Web Fonts ───
+   NOTE: Google Fonts @import REMOVED — it is render-blocking and causes
+   30+ second startup freezes when offline or behind firewalls (e.g. China GFW).
+   Brand fonts are bundled locally (woff2 in /fonts/) so the splash brand
+   "Lora" treatment ships with the app without any CDN dependency. */
+
+/* ─── Local Fonts (no CDN — works offline in WebView2) ── */
+@font-face {
+    font-family: 'Inter';
+    src: url('/fonts/inter-400.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Inter';
+    src: url('/fonts/inter-500.woff2') format('woff2');
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Inter';
+    src: url('/fonts/inter-600.woff2') format('woff2');
+    font-weight: 600;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Inter';
+    src: url('/fonts/inter-700.woff2') format('woff2');
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+}
+
+/* ─── Monospace Terminal Font (embedded — no system font dependency) ── */
+@font-face {
+    font-family: 'CascadiaMono';
+    src: url('/fonts/CascadiaMono-Regular.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+/* ─── Local CJK Fonts (fallback for non-Mac users) ── */
+@font-face {
+    font-family: 'Noto Sans SC';
+    src: url('/fonts/noto-sans-sc-500.otf') format('opentype');
+    font-weight: 400 500; /* Use this font for both normal and medium weights */
+    font-style: normal;
+    font-display: swap;
+}
+
+/* ─── Brand Serif (splash-label "art font") ──
+   Lora italic 500, Latin + Latin-Ext only (~36 KB total). Splash text is
+   always English brand names ("Claude Code", "Codex CLI"...) since CJK
+   splash content is routed to a stable bold display via the .splash-label
+   :lang() rules — see TierTerminal.css. unicode-range stays in sync with
+   Google Fonts' upstream subsetting so the browser only loads each file
+   when a glyph in that range appears. SIL OFL 1.1 — see Lora upstream:
+   https://fonts.google.com/specimen/Lora */
+@font-face {
+    font-family: 'Lora';
+    src: url('/fonts/lora-italic-500-latin.woff2') format('woff2');
+    font-weight: 500;
+    font-style: italic;
+    font-display: swap;
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+    font-family: 'Lora';
+    src: url('/fonts/lora-italic-500-latin-ext.woff2') format('woff2');
+    font-weight: 500;
+    font-style: italic;
+    font-display: swap;
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+
+/* ─── Base Reset ─────────────────────────────────────── */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; cursor: default !important; }
+
+/* Text-editable surfaces get the I-beam back — the blanket reset above
+   kills noisy hover cursors (pointers/forbids/grabs), but inputs still
+   need the insertion caret affordance so users can tell where clicking
+   will land the caret. Scope is intentional: only actual text entry. */
+input:not([type='checkbox']):not([type='radio']):not([type='button']):not([type='submit']):not([type='range']):not([type='color']):not([type='file']),
+textarea,
+[contenteditable='true'],
+[contenteditable='']
+{
+    cursor: text !important;
+}
+
+/* ─── Scrollbars: completely hidden, app-wide ──────────
+   We tried floating hairline bars 5+ times; WebView2 + xterm.js +
+   nested Tauri viewports kept letting native Windows 11 scrollbars
+   leak through in random spots. Modern macOS / mobile do this by
+   default — users scroll via wheel / trackpad / PageUp+PageDown,
+   no visual track. One global rule kills every scrollbar across
+   every component, every theme, every WebView edge case. */
+*::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+}
+* {
+    scrollbar-width: none !important; /* Firefox */
+    -ms-overflow-style: none !important; /* legacy Edge / IE11 */
+}
+
+:root {
+    /* Local Inter font for English, premium system fallbacks for CJK */
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Noto Sans SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
+    --font-serif: 'Lora', ui-serif, Georgia, Cambria, "Times New Roman", 'PingFang SC', 'Noto Sans SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    --mono: 'Cascadia Code', 'Cascadia Mono', 'SF Mono', Menlo, Monaco, Consolas, 'Courier New', monospace;
+    --radius-xs: 4px;
+    --radius-sm: 8px;
+    --radius-md: 16px;
+    --radius-lg: 24px;
+    --radius-pill: 9999px;
+    --transition: 0.2s ease;
+
+    /* Panel Config */
+    --w-left: 320px;
+    --w-right: 320px;
+    --gap: 16px;
+
+    /* ─── Shape form defaults (overridden by [data-shape]) ──────── */
+    --shape-radius-tab: 10px 10px 0 0;
+    --shape-radius-panel: var(--radius-md);
+    --shape-radius-btn: var(--radius-sm);
+    --shape-radius-pill: var(--radius-pill);
+    --shape-edge-light-top: transparent;
+    --shape-edge-light-bottom: transparent;
+    --shape-accent-stripe-width: 0px;
+    --shape-border-strength: 1;
+}
+
+/* ═══════════════════════════════════════════════════════
+   SHAPE FORMS — orthogonal to color theme
+   Applied via [data-shape] on <html>. Overrides radius vars
+   so existing var(--radius-sm/md/lg/pill) consumers react.
+   ═══════════════════════════════════════════════════════ */
+
+/* Soft — current rounded look (default) */
+[data-shape="soft"] {
+    --radius-xs: 4px;
+    --radius-sm: 8px;
+    --radius-md: 16px;
+    --radius-lg: 24px;
+    --radius-pill: 9999px;
+    --shape-radius-tab: 10px 10px 0 0;
+    --shape-radius-panel: 16px;
+    --shape-radius-btn: 8px;
+    --shape-radius-pill: 9999px;
+}
+
+/* Slab — micro-rounded + directional light edges (立体石板) */
+[data-shape="slab"] {
+    --radius-xs: 2px;
+    --radius-sm: 3px;
+    --radius-md: 4px;
+    --radius-lg: 6px;
+    --radius-pill: 4px;
+    --shape-radius-tab: 3px 3px 0 0;
+    --shape-radius-panel: 4px;
+    --shape-radius-btn: 3px;
+    --shape-radius-pill: 4px;
+    --shape-edge-light-top: rgba(255, 255, 255, 0.07);
+    --shape-edge-light-bottom: rgba(0, 0, 0, 0.35);
+    --shape-border-strength: 1.25;
+}
+
+/* Sharp Terminal — fully flat, VSCode default */
+[data-shape="sharp"] {
+    --radius-xs: 0px;
+    --radius-sm: 0px;
+    --radius-md: 0px;
+    --radius-lg: 0px;
+    --radius-pill: 0px;
+    --shape-radius-tab: 0;
+    --shape-radius-panel: 0;
+    --shape-radius-btn: 0;
+    --shape-radius-pill: 0;
+    --shape-border-strength: 1.5;
+}
+
+/* Glass — same radii as Soft, but every chrome surface drops to
+   translucency so the OS desktop / wallpaper bleeds through. No
+   diagonal sheens, no radial glows, no edge highlights — just
+   Soft + see-through. The visual interest comes from whatever's
+   behind the window, not from extra ornamentation we draw. */
+[data-shape="glass"] {
+    --radius-xs: 4px;
+    --radius-sm: 8px;
+    --radius-md: 16px;
+    --radius-lg: 24px;
+    --radius-pill: 9999px;
+    --shape-radius-tab: 10px 10px 0 0;
+    --shape-radius-panel: 16px;
+    --shape-radius-btn: 8px;
+    --shape-radius-pill: 9999px;
+    --glass-blur: blur(24px) saturate(160%);
+}
+
+/* Panel — flat + hard dividers (tmux/老终端) */
+[data-shape="panel"] {
+    --radius-xs: 0px;
+    --radius-sm: 0px;
+    --radius-md: 0px;
+    --radius-lg: 0px;
+    --radius-pill: 0px;
+    --shape-radius-tab: 0;
+    --shape-radius-panel: 0;
+    --shape-radius-btn: 0;
+    --shape-radius-pill: 0;
+    --shape-border-strength: 2;
+}
+
+/* ─── Dark Theme (Claude-inspired & Espresso) ──────────── */
+[data-theme="dark"] {
+    --bg-app: #1a1917; /* Deep Espresso */
+    --bg-panel: #22201e; /* Minimal contrast */
+    --bg-card: rgba(255, 255, 255, 0.03);
+    --bg-input: #292624;
+    --bg-input-focus: #312e2b;
+    --bg-hover: rgba(255, 255, 255, 0.05);
+    --bg-active: rgba(255, 255, 255, 0.08);
+
+    --border: rgba(255, 255, 255, 0.04);
+    --border-input: rgba(255, 255, 255, 0.06);
+    --border-focus: rgba(255, 255, 255, 0.15);
+
+    --text-1: #e4e1db;
+    --text-2: #aca79e;
+    --text-3: #807b74;
+
+    --accent: #c4956a;
+    --accent-hover: #d4a57a;
+    --accent-active: #b5865c;
+    --accent-bg: rgba(196, 149, 106, 0.12);
+
+    --green: #7ec77e;
+    --red: #e07070;
+    --blue: #78a8d4;
+
+    --shadow-panel: 0 16px 48px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.15);
+    --glass-blur: blur(24px);
+    /* RGB triplet of the colour used for floating drop-shadows on
+       theme-aware surfaces (currently Gambit). Pure-black drop shadows
+       vanish into the deep-espresso background; the accent-derived
+       triplet keeps the shadow readable while still feeling on-palette. */
+    --shadow-rgb: 196, 149, 106;
+
+    --bg-titlebar: rgba(0, 0, 0, 0.1);
+    --bg-terminal: #1a1917; /* Match bg-app — unified surface rule across themes */
+}
+
+/* ─── Light Theme (Latte / Warm Ivory Parchment) ──────── */
+/* Contrast tightened to match Claude desktop's light theme: near-black
+   primary, dark-gray secondary, mid-gray tertiary. The previous palette
+   (text-2 #6b6965, text-3 #9e9c98) hit ~5:1 / ~3:1 against the ivory
+   background — readable on paper but visibly washed once the .cwd
+   subtitle layered an extra opacity: 0.6 on top of text-3, dropping
+   that line to ~2:1 (effectively invisible). */
+[data-theme="light"] {
+    --bg-app: #FAFAF7; /* Clean ivory */
+    --bg-panel: rgba(255, 255, 255, 0.7); /* Breathable transparency */
+    --bg-card: #ffffff;
+    --bg-input: #ffffff;
+    --bg-input-focus: #ffffff;
+    --bg-hover: rgba(0, 0, 0, 0.04);
+    --bg-active: rgba(0, 0, 0, 0.08);
+
+    --border: rgba(0, 0, 0, 0.1); /* Was 0.06 — too faint to delineate cards */
+    --border-input: rgba(0, 0, 0, 0.14);
+    --border-focus: rgba(196, 149, 106, 0.45);
+
+    --text-1: #1a1816; /* Near-black, matches Claude's primary */
+    --text-2: #4a4844; /* Darker secondary — sidebar nav level */
+    --text-3: #737170; /* Mid-gray — survives the .cwd opacity 0.6 multiplier */
+
+    --accent: #a87246; /* Darker tan — original #c4956a was 3:1 on white */
+    --accent-hover: #976237;
+    --accent-active: #855228;
+    --accent-bg: rgba(168, 114, 70, 0.1);
+
+    --green: #34c759;
+    --red: #ff3b30;
+    --blue: #78a8d4;
+
+    --shadow-panel: 0 16px 48px rgba(0, 0, 0, 0.06), 0 4px 16px rgba(0, 0, 0, 0.03); /* Claude-like soft diffuse shadow */
+    --glass-blur: blur(28px);
+    /* Light theme keeps the classic black drop-shadow — the ivory
+       background reads it cleanly, no need for the accent-derived
+       coloured shadow that the dark themes use. */
+    --shadow-rgb: 0, 0, 0;
+
+    --bg-titlebar: rgba(0, 0, 0, 0.03);
+    --bg-terminal: #eeebe2; /* Soft cream — slightly darker than ivory body
+                               so terminal reads as a recessed workspace
+                               between the two brighter side panels. */
+}
+
+/* ─── Code Dark (代码夜) — Cursor IDE faithful palette ──────── */
+[data-theme="cappuccino"] {
+    --bg-app: #1a1a1a;
+    --bg-panel: #252525;
+    --bg-card: rgba(255, 255, 255, 0.03);
+    --bg-input: #3a3a3a;
+    --bg-input-focus: #444444;
+    --bg-hover: rgba(255, 255, 255, 0.05);
+    --bg-active: rgba(255, 255, 255, 0.08);
+
+    --border: #333333;
+    --border-input: #3a3a3a;
+    --border-focus: #555555;
+
+    --text-1: #cccccc;
+    --text-2: #808080;
+    --text-3: #555555;
+
+    --accent: #4a4a4a;
+    --accent-hover: #5a5a5a;
+    --accent-active: #3a3a3a;
+    --accent-bg: rgba(255, 255, 255, 0.05);
+
+    --green: #4ec9b0;
+    --red: #f14c4c;
+    --blue: #569cd6;
+
+    --shadow-panel: 0 16px 48px rgba(0, 0, 0, 0.6), 0 4px 16px rgba(0, 0, 0, 0.4);
+    --shadow-rgb: 160, 160, 160;
+    --glass-blur: blur(24px);
+
+    --bg-titlebar: rgba(0, 0, 0, 0.35);
+    --bg-terminal: #1a1a1a; /* Match bg-app */
+}
+
+/* ─── Sakura Noir (夜樱) — pink on deep plum ──────── */
+[data-theme="sakura"] {
+    --bg-app: #1a1520;
+    --bg-panel: #221b28;
+    --bg-card: rgba(248, 180, 200, 0.035);
+    --bg-input: #2a2230;
+    --bg-input-focus: #322838;
+    --bg-hover: rgba(248, 180, 200, 0.06);
+    --bg-active: rgba(248, 180, 200, 0.1);
+
+    --border: rgba(248, 180, 200, 0.06);
+    --border-input: rgba(248, 180, 200, 0.09);
+    --border-focus: rgba(248, 180, 200, 0.4);
+
+    --text-1: #f0e4ea;
+    --text-2: #c4b0bc;
+    --text-3: #8a7684;
+
+    --accent: #f8b4c8;
+    --accent-hover: #ffc6d6;
+    --accent-active: #e89cb4;
+    --accent-bg: rgba(248, 180, 200, 0.14);
+
+    --green: #a8dcc0;
+    --red: #ff8098;
+    --blue: #b4a8e0;
+
+    --shadow-panel: 0 16px 48px rgba(40, 10, 30, 0.45), 0 4px 16px rgba(20, 5, 15, 0.2);
+    --shadow-rgb: 248, 180, 200;
+    --glass-blur: blur(24px);
+
+    --bg-titlebar: rgba(0, 0, 0, 0.15);
+    --bg-terminal: #1a1520; /* Match bg-app */
+}
+
+/* ─── Lavender Mist (薰衣草雾) — lilac on deep violet-grey ──────── */
+[data-theme="lavender"] {
+    --bg-app: #1a1826;
+    --bg-panel: #221f2e;
+    --bg-card: rgba(200, 182, 255, 0.035);
+    --bg-input: #2a2638;
+    --bg-input-focus: #322d42;
+    --bg-hover: rgba(200, 182, 255, 0.06);
+    --bg-active: rgba(200, 182, 255, 0.1);
+
+    --border: rgba(200, 182, 255, 0.07);
+    --border-input: rgba(200, 182, 255, 0.1);
+    --border-focus: rgba(200, 182, 255, 0.38);
+
+    --text-1: #e8e4f2;
+    --text-2: #b8b0cc;
+    --text-3: #7e7890;
+
+    --accent: #c8b6ff;
+    --accent-hover: #d8c8ff;
+    --accent-active: #b0a0ec;
+    --accent-bg: rgba(200, 182, 255, 0.13);
+
+    --green: #a8d4b8;
+    --red: #f09090;
+    --blue: #a0b8e4;
+
+    --shadow-panel: 0 16px 48px rgba(20, 15, 40, 0.45), 0 4px 16px rgba(10, 8, 20, 0.2);
+    --shadow-rgb: 200, 182, 255;
+    --glass-blur: blur(24px);
+
+    --bg-titlebar: rgba(0, 0, 0, 0.15);
+    --bg-terminal: #1a1826; /* Match bg-app */
+}
+
+/* ─── Mint Abyss (薄荷深海) — mint on deep teal-black ──────── */
+[data-theme="mint"] {
+    --bg-app: #0f1e1c;
+    --bg-panel: #142623;
+    --bg-card: rgba(122, 232, 200, 0.035);
+    --bg-input: #1a2e2a;
+    --bg-input-focus: #203832;
+    --bg-hover: rgba(122, 232, 200, 0.06);
+    --bg-active: rgba(122, 232, 200, 0.1);
+
+    --border: rgba(122, 232, 200, 0.07);
+    --border-input: rgba(122, 232, 200, 0.1);
+    --border-focus: rgba(122, 232, 200, 0.38);
+
+    --text-1: #e0f0ea;
+    --text-2: #a0c4b8;
+    --text-3: #688478;
+
+    --accent: #7ae8c8;
+    --accent-hover: #94f2d6;
+    --accent-active: #60d0b0;
+    --accent-bg: rgba(122, 232, 200, 0.13);
+
+    --green: #7ae8c8;
+    --red: #ff8878;
+    --blue: #78c8d4;
+
+    --shadow-panel: 0 16px 48px rgba(0, 15, 12, 0.45), 0 4px 16px rgba(0, 8, 6, 0.2);
+    --shadow-rgb: 122, 232, 200;
+    --glass-blur: blur(24px);
+
+    --bg-titlebar: rgba(0, 0, 0, 0.15);
+    --bg-terminal: #0f1e1c; /* Match bg-app */
+}
+
+/* ─── Obsidian (黑曜石) — near-black with neutral-gray accent ──────
+   Deeper than every other dark theme (dark #1a1917, cappuccino #1a1a1a).
+   No hue — just pure carbon black with graphite-gray chrome. Accent is
+   intentionally a mid-gray, not orange; nothing competes with the black. */
+[data-theme="obsidian"] {
+    --bg-app: #0a0a0a;
+    --bg-panel: #111111;
+    --bg-card: rgba(255, 255, 255, 0.02);
+    --bg-input: #181818;
+    --bg-input-focus: #1e1e1e;
+    --bg-hover: rgba(255, 255, 255, 0.035);
+    --bg-active: rgba(255, 255, 255, 0.06);
+
+    --border: rgba(255, 255, 255, 0.045);
+    --border-input: rgba(255, 255, 255, 0.065);
+    --border-focus: rgba(255, 255, 255, 0.2);
+
+    --text-1: #d0d0d0;
+    --text-2: #8a8a8a;
+    --text-3: #5a5a5a;
+
+    --accent: #5a5a5a;
+    --accent-hover: #6e6e6e;
+    --accent-active: #4a4a4a;
+    --accent-bg: rgba(255, 255, 255, 0.06);
+
+    --green: #7fb07f;
+    --red: #d07070;
+    --blue: #6ea0cc;
+
+    --shadow-panel: 0 16px 48px rgba(0, 0, 0, 0.75), 0 4px 16px rgba(0, 0, 0, 0.55);
+    --shadow-rgb: 160, 160, 160;
+    --glass-blur: blur(24px);
+
+    --bg-titlebar: rgba(0, 0, 0, 0.4);
+    --bg-terminal: #0a0a0a; /* Match bg-app */
+}
+
+/* ─── Cobalt (钴蓝) — near-black with a faint blue wash ──────────
+   The hue is felt, not seen. Base #0a1020 is only a few points of red/green
+   below pure black but adds a measurable blue tilt. Accent is a muted
+   steel-blue, nowhere near cyan. */
+[data-theme="cobalt"] {
+    --bg-app: #0a1020;
+    --bg-panel: #0f1628;
+    --bg-card: rgba(160, 190, 230, 0.025);
+    --bg-input: #141c32;
+    --bg-input-focus: #1a233c;
+    --bg-hover: rgba(160, 190, 230, 0.045);
+    --bg-active: rgba(160, 190, 230, 0.075);
+
+    --border: rgba(160, 190, 230, 0.06);
+    --border-input: rgba(160, 190, 230, 0.09);
+    --border-focus: rgba(90, 133, 184, 0.5);
+
+    --text-1: #d0d6e2;
+    --text-2: #8e99b0;
+    --text-3: #5a6478;
+
+    --accent: #5a85b8;
+    --accent-hover: #6e97c8;
+    --accent-active: #4a73a3;
+    --accent-bg: rgba(90, 133, 184, 0.14);
+
+    --green: #7fa8b8;
+    --red: #c88888;
+    --blue: #7ea4cc;
+
+    --shadow-panel: 0 16px 48px rgba(0, 2, 10, 0.65), 0 4px 16px rgba(0, 1, 6, 0.4);
+    --shadow-rgb: 90, 133, 184;
+    --glass-blur: blur(24px);
+
+    --bg-titlebar: rgba(0, 0, 0, 0.28);
+    --bg-terminal: #0a1020; /* Match bg-app */
+}
+
+/* ─── Moss (苔藓) — near-black with a faint green wash ─────────
+   Same philosophy as cobalt: the base is nearly black, hue carried by a
+   small green offset. Accent is a sedate forest-green, not the bright
+   teal of "mint". Intended for long reading sessions. */
+[data-theme="moss"] {
+    --bg-app: #0b1612;
+    --bg-panel: #101c18;
+    --bg-card: rgba(160, 200, 180, 0.025);
+    --bg-input: #152320;
+    --bg-input-focus: #1a2a26;
+    --bg-hover: rgba(160, 200, 180, 0.045);
+    --bg-active: rgba(160, 200, 180, 0.075);
+
+    --border: rgba(160, 200, 180, 0.06);
+    --border-input: rgba(160, 200, 180, 0.09);
+    --border-focus: rgba(106, 152, 120, 0.5);
+
+    --text-1: #d0d6d2;
+    --text-2: #8ea094;
+    --text-3: #5a6860;
+
+    --accent: #6a9878;
+    --accent-hover: #7ea98a;
+    --accent-active: #568366;
+    --accent-bg: rgba(106, 152, 120, 0.13);
+
+    --green: #6a9878;
+    --red: #c88878;
+    --blue: #7ea4a4;
+
+    --shadow-panel: 0 16px 48px rgba(2, 10, 7, 0.6), 0 4px 16px rgba(1, 5, 4, 0.35);
+    --shadow-rgb: 106, 152, 120;
+    --glass-blur: blur(24px);
+
+    --bg-titlebar: rgba(0, 0, 0, 0.24);
+    --bg-terminal: #0b1612; /* Match bg-app */
+}
+
+/* ─── App Shell ──────────────────────────────────────── */
+/* CRITICAL for Tauri WebView2: explicit height chain from root down.
+   Without height:100% on every flex ancestor, child flex:1 resolves to 0
+   and tab content becomes invisible. */
+html {
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+}
+
+body {
+    height: 100%;
+    margin: 0;
+    font-family: var(--font);
+    font-size: 14px;
+    /* No bg here — moved to #root so the rounded clip on #root
+       fully owns where the app's surface paints. Body with both
+       a bg AND clip-path was leaking square corners in non-Glass
+       themes (WebView2 promoted body's bg to its own GPU layer,
+       sidestepping clip-path). Glass already painted on #root,
+       which is why only Glass appeared rounded. */
+    background: transparent;
+    color: var(--text-1);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    flex-direction: column;
+}
+
+/* React root — must be in height chain for WebView2.
+   ALSO carries the app-wide surface bg + rounded window corners
+   for ALL themes. Bg is `--bg-app` by default; Glass overrides
+   it to `--glass-tint` (translucent) further down. clip-path
+   gives a hard 10px rounded clip that no descendant stacking
+   context can leak past — the 4 corner cut-outs show OS desktop
+   through Tauri's transparent window. */
+#root {
+    height: 100%;
+    background: var(--bg-app);
+    border-radius: 10px;
+    clip-path: inset(0 round 10px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+
+/* ─── Custom Titlebar ────────────────────────────────── */
+.titlebar {
+    height: 32px;
+    background: var(--bg-titlebar);
+    display: flex;
+    /* Layout toggles + window controls group to the right; the whole
+       left side stays draggable. Matches VS Code / JetBrains: chrome
+       clusters on one side, the rest is grab-handle. */
+    justify-content: flex-end;
+    align-items: center;
+    user-select: none;
+    flex-shrink: 0;
+    -webkit-app-region: drag;
+}
+
+/* Layout toggles sit immediately left of the window controls as a
+   tiny no-drag zone. Tighter than the window controls on purpose —
+   these are "tools" (quick-access settings), not "actions" (which
+   need a bigger hit-target by convention). */
+.titlebar-layout-toggles {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    margin-right: 2px;
+    -webkit-app-region: no-drag;
+}
+
+.titlebar-btn--layout {
+    width: 36px;    /* matches VS Code's 36px activity-bar-like slot */
+    height: 100%;   /* fill titlebar so the active background reads as
+                       one continuous surface with the panel below */
+    margin: 0;
+    padding: 0;
+    color: var(--text-2);
+    opacity: 0.6;
+    border-radius: 0;  /* sharp corners — industrial, no chip look */
+}
+
+/* 16px glyphs at a 24×24 viewBox. `display: block` kills the 4px
+   baseline gap under inline SVGs that would otherwise misalign the
+   icon inside its 36×fullHeight button. */
+.titlebar-btn--layout svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+}
+
+.titlebar-btn--layout:hover {
+    opacity: 0.95;
+    background: var(--bg-hover);
+}
+
+/* Active = persistent hover background. The icon color stays the
+   default text-2 grey — no accent tint — because the background
+   alone carries the "this is on" signal, visually bleeding into the
+   panel surface below the titlebar for a connected, unified feel. */
+.titlebar-btn--layout.is-active {
+    opacity: 1;
+    background: var(--bg-hover);
+}
+
+.titlebar-sep {
+    width: 1px;
+    height: 12px;
+    margin: 0 3px;
+    background: var(--border-color, rgba(255,255,255,0.14));
+    opacity: 0.5;
+}
+
+.titlebar-controls {
+    display: flex;
+    height: 100%;
+    -webkit-app-region: no-drag;
+}
+
+.titlebar-btn {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    width: 46px;
+    height: 100%;
+    background: transparent;
+    border: none;
+    color: var(--text-2);
+    cursor: default;
+    transition: background 0.1s, color 0.1s;
+    outline: none;
+    -webkit-app-region: no-drag;
+}
+
+.titlebar-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-1);
+}
+
+.titlebar-btn.close:hover {
+    background: #e81123;
+    color: #ffffff;
+}
+
+/* When the user hides a side panel from the titlebar toggle, we drop
+   it from the flex layout entirely — display:none (not width:0) so
+   the center reclaims the full width without an empty gutter, and
+   the hidden panel's children stop firing resize/xterm-fit events. */
+.app-layout--left-hidden .panel-left { display: none; }
+.app-layout--right-hidden .panel-right { display: none; }
+
+.app-layout {
+    display: flex;
+    flex: 1;           /* fills space below titlebar */
+    min-height: 0;     /* WebView2: allows shrink */
+    width: 100%;
+    padding: 0; /* Fully edge-to-edge */
+    gap: 0; /* Fully edge-to-edge */
+}
+
+/* ─── Panels ─────────────────────────────────────────── */
+/* min-height: 0 is mandatory on flex panels so the flex children can
+   shrink below their natural content height in WebView2 */
+.panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;       /* WebView2 flex fix */
+    background: var(--bg-panel);
+    border-radius: 0; /* Remove rounded corners for flush design */
+    border: none; /* Rely on hairline dividers instead */
+    /* backdrop-filter removed from base — too expensive on transparent windows.
+       Only panels with semi-transparent backgrounds should use it (panel-left). */
+    box-shadow: none; /* Remove floating shadows */
+    overflow: hidden;
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    flex-shrink: 0;
+    /* No divider line. The header was historically separated from
+       the content by `border-bottom: 1px solid var(--border)`, which
+       on translucent panels (glass) reads as a second visible layer
+       and even on opaque panels (soft/slab/etc.) makes the panel
+       look "stacked" in 3 zones (header / tabs / tree). Identity
+       comes from spacing alone — single layer for every theme. */
+}
+
+.panel-content {
+    flex: 1;
+    overflow-y: auto;
+    /* No gutter — WebKit custom scrollbars are overlay, no space reserved */
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+/* ─── Left Panel (Explorer) ──────────────────────────── */
+.panel-left {
+    width: var(--w-left);
+    min-width: var(--w-left);
+    flex-shrink: 0;
+    /* IDE-style framing: side panels share --bg-panel (slightly lighter
+       in every theme), center workspace stays at --bg-app / --bg-terminal
+       (slightly darker), so the terminal reads as the focal "recessed"
+       surface between two brighter rails. Light theme already had this
+       differentiation via --bg-terminal != --bg-app; this rule extends
+       the same pattern to all dark themes by giving the side panels a
+       distinct surface from the body. */
+    background: var(--bg-panel);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+}
+
+/* Explorer panel-content: overflow hidden so welcome state flex-center works */
+.explorer-content {
+    overflow: hidden;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    font-family: var(--font, system-ui);
+    font-size: 16px;
+    letter-spacing: 0.02em;
+    color: var(--text-1); /* Stark white text contrasting the accent icon */
+}
+
+.brand-icon {
+    color: var(--accent);
+}
+
+.window-controls {
+    display: flex;
+    gap: 4px;
+}
+
+.icon-btn {
+    padding: 6px;
+    border: none;
+    background: none;
+    color: var(--text-2);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-family: var(--font);
+    font-weight: 600;
+}
+
+.icon-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-1);
+}
+
+.icon-btn.xs {
+    padding: 3px;
+    font-size: 13px;
+    border-radius: 4px;
+}
+
+.section-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-3);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.mt-4 { margin-top: 16px; }
+
+.section-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.file-tree {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 12px;
+}
+
+.explorer-footer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-3);
+}
+
+#status-text {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    text-align: center;
+    width: 100%;
+}
+
+/* ─── Center Panel (Workspace) ───────────────────────── */
+/* CRITICAL for Tauri WebView2: flex:1 alone does NOT guarantee the panel fills remaining space
+   without min-height:0 on itself AND its flex parent */
+.panel-center {
+    flex: 1;
+    min-width: 400px;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    /* No backdrop-filter — terminal uses opaque background + WebGL rendering.
+       Blur here causes severe flickering in WebView2 release builds. */
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+/* Gambit docked mode: reserve space at the bottom of the center panel
+   so the docked compose strip never overlays the terminal. The flex:1
+   xterm container shrinks, ResizeObserver fires, fitAddon refits — no
+   imperative resize plumbing required. The CSS var is set live by
+   Gambit.tsx (initial value + during top-edge drag-resize). */
+/* Reserve room at the bottom for the docked Gambit card PLUS its 8px
+   top/bottom breathing gap (16px total). We apply this to .tier-terminal
+   AND .launchpad-container — NOT to .panel-center — so that each
+   container's own `position: absolute; inset: 0` background layer
+   (.tier-terminal-bg / .launchpad-bg) naturally extends through the
+   padding region. Result: the gap above the dock shows the terminal's
+   wallpaper / background, integrated visually with the terminal area
+   instead of exposing the raw panel chrome surface beneath. The flex:1
+   xterm / launchpad content inside still shrinks (padding reduces the
+   content box), ResizeObserver fires, fitAddon refits. */
+body.gambit-docked .tier-terminal,
+body.gambit-docked .launchpad-container,
+body.gambit-docked .multi-agent-grid-standalone {
+    padding-bottom: calc(var(--gambit-dock-h, 200px) + 16px);
+}
+
+/* Mode-switch button (bottom-right) anchors directly to .launchpad-container,
+   whose padding box extends UNDER the docked Gambit — without compensation
+   it ends up hidden. Expose --dock-bottom-offset so it can opt in via
+   `bottom: calc(<original-bottom> + var(--dock-bottom-offset, 0px))`.
+
+   Note: .library-counter and .library-tabs do NOT need this offset. They
+   anchor to .library-page (position: relative), whose height: 100% chain
+   already shrinks with the container's padding-bottom. Adding the offset
+   there double-lifts them and eats into the visible grid area. */
+body.gambit-docked {
+    --dock-bottom-offset: calc(var(--gambit-dock-h, 200px) + 16px);
+}
+
+
+.panel-tabs {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border); /* Hairline divider */
+    gap: 4px;
+    background: transparent;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    min-height: 44px;
+}
+
+.tab-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px; /* Increased horizontal padding */
+    border: none;
+    background: none;
+    color: var(--text-2);
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: var(--radius-pill); /* Pill shaped! */
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.tab-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-1);
+}
+
+.tab-btn.active {
+    background: var(--bg-active);
+    color: var(--text-1);
+}
+
+.tab-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 8px;
+}
+
+.action-btn {
+    padding: 6px 16px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: white;
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: var(--radius-pill); /* Pill shaped */
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.action-btn:hover { background: var(--accent-hover); }
+.action-btn.outline {
+    background: transparent;
+    border: 1px solid var(--border-focus); /* Softer outline */
+    color: var(--text-1);
+}
+.action-btn.outline:hover { background: var(--accent-bg); border-color: var(--accent); color: var(--accent) }
+
+/* Main content area — must have explicit flex constraints so child .view heights resolve correctly in Tauri WebView */
+.main-content {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.view {
+    display: none;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.view.active {
+    display: flex;
+}
+
+.view-stats {
+    padding: 16px 24px 8px;
+    font-size: 12px;
+    color: var(--text-3);
+    font-weight: 500;
+}
+
+.sep { margin: 0 6px; opacity: 0.5; }
+
+.repo-map, .prompt-output {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 24px 24px;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.repo-map {
+    color: var(--text-2);
+}
+
+/* ─── Super Prompt Chat Bubbles ───────────────────────────── */
+.sp-history-container {
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.sp-bubble {
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.sp-bubble.slide-up {
+    animation: slideUpFade 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes slideUpFade {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.sp-bubble-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.1); /* Subtle contrast */
+}
+
+.sp-bubble-content {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.sp-fragment {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.sp-fragment-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-3);
+}
+
+.sp-fragment-pre {
+    margin: 0;
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    border-radius: var(--radius-sm);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-1);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.sp-fragment-muted {
+    font-size: 12px;
+    color: var(--text-3);
+    font-style: italic;
+}
+
+.sp-toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+}
+
+.sp-stats {
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--text-3);
+    letter-spacing: 0.02em;
+}
+
+.sp-task-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.sp-task-small {
+    background: rgba(78, 201, 79, 0.12);
+    color: #4ec94f;
+    border: 1px solid rgba(78, 201, 79, 0.25);
+}
+
+.sp-task-medium {
+    background: rgba(120, 168, 212, 0.12);
+    color: #78a8d4;
+    border: 1px solid rgba(120, 168, 212, 0.25);
+}
+
+.sp-task-large {
+    background: rgba(212, 168, 70, 0.12);
+    color: #d4a846;
+    border: 1px solid rgba(212, 168, 70, 0.25);
+}
+
+.sp-hint {
+    font-size: 11px;
+    color: #d4a846;
+    opacity: 0.8;
+    white-space: nowrap;
+    border: 1px solid rgba(212, 168, 70, 0.2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(212, 168, 70, 0.05);
+}
+
+.sp-hint-link {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.sp-hint-link:hover {
+    opacity: 1;
+    background: rgba(212, 168, 70, 0.15);
+    border-color: rgba(212, 168, 70, 0.4);
+}
+
+.sp-hint-ok {
+    color: var(--text-3);
+    border: 1px solid var(--border);
+    background: transparent;
+}
+
+/* ─── Super Prompt: Compiling Loading State ───────────── */
+.sp-compiling-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 16px;
+}
+
+.sp-compiling-orbs {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.sp-orb {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: sp-orb-bounce 1.2s ease-in-out infinite;
+}
+
+.sp-orb-1 { animation-delay: 0s; }
+.sp-orb-2 { animation-delay: 0.18s; }
+.sp-orb-3 { animation-delay: 0.36s; }
+
+@keyframes sp-orb-bounce {
+    0%, 80%, 100% {
+        transform: scale(0.6);
+        opacity: 0.4;
+    }
+    40% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.sp-compiling-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-1);
+    margin: 0;
+}
+
+.sp-compiling-sub {
+    font-size: 12.5px;
+    color: var(--text-3);
+    margin: 0;
+    line-height: 1.6;
+}
+
+/* Loading bubble in history view */
+.sp-bubble-loading {
+    padding: 16px 20px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+
+
+.sp-copy-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    background: var(--bg-hover);
+    color: var(--text-2);
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.sp-copy-btn:hover {
+    background: var(--bg-active);
+    color: var(--text-1);
+    border-color: var(--text-3);
+}
+
+.sp-copy-btn.copied {
+    background: rgba(78, 201, 79, 0.12);
+    color: #4ec94f;
+    border-color: rgba(78, 201, 79, 0.3);
+}
+
+.empty-state, .loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-3);
+    text-align: center;
+}
+
+.empty-icon {
+    font-size: 32px;
+    margin-bottom: 6px;
+    color: var(--text-3);
+    opacity: 0.5;
+}
+
+.empty-title {
+    font-family: var(--font-serif, var(--font));
+    font-size: 20px;
+    font-weight: 500;
+    color: var(--text-1);
+    margin: 0 0 6px 0;
+    letter-spacing: 0.02em;
+}
+
+.empty-sub {
+    font-size: 12.5px;
+    color: var(--text-3);
+    line-height: 1.6;
+    margin: 0;
+    max-width: 320px;
+}
+
+/* ─── Right Panel (Compiler) ─────────────────────────── */
+.panel-right {
+    width: var(--w-right);
+    min-width: var(--w-right);
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    /* Same --bg-panel as .panel-left (see comment there) — sandwich
+       the darker terminal/launchpad center between two brighter rails. */
+    background: var(--bg-panel);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: none;
+    border-radius: 0;
+    overflow: visible;
+}
+
+.compiler-top {
+    flex: 1;
+    padding: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+
+/* Cost Card */
+.token-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.token-val {
+    font-size: 24px;
+    font-weight: 700;
+    font-family: var(--mono);
+    color: var(--text-1);
+    letter-spacing: -0.02em;
+}
+
+.token-lbl {
+    font-size: 12px;
+    color: var(--text-3);
+    font-weight: 500;
+}
+
+.price-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-2);
+    margin-bottom: 6px;
+}
+
+.price-row:last-child { margin-bottom: 0; }
+.price-row strong { color: var(--text-1); font-family: var(--mono); font-weight: 600; }
+
+.selection-status {
+    padding: 16px;
+    text-align: center;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+/* ─── Bottom Input Area ──────────────────────────────── */
+.compiler-bottom {
+    padding: 16px;
+    background: var(--bg-app); /* visual separation */
+    border-top: 1px solid var(--border);
+}
+
+.input-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.input-container label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-2);
+}
+
+.goal-textarea {
+    width: 100%;
+    min-height: 80px;
+    max-height: 200px;
+    padding: 12px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-input);
+    border-radius: var(--radius-sm);
+    color: var(--text-1);
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.5;
+    resize: vertical;
+    outline: none;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
+    transition: border-color var(--transition);
+}
+
+.goal-textarea:focus { border-color: var(--border-focus); }
+.goal-textarea::placeholder { color: var(--text-3); }
+
+.compile-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 14px;
+    border: none;
+    background: var(--accent);
+    color: white;
+    font-family: var(--font);
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition);
+    box-shadow: 0 4px 12px var(--accent-bg);
+}
+
+.compile-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
+    transform: translateY(-1px);
+}
+
+.compile-btn:active:not(:disabled) {
+    background: var(--accent-active);
+    transform: translateY(0);
+}
+
+.compile-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* ─── Repo Map Typography ────────────────────────────── */
+.rm-file { margin-bottom: 12px; }
+.rm-fname { color: var(--text-1); font-weight: 600; font-size: 14px; }
+.rm-meta { color: var(--text-3); font-size: 11px; margin-left: 6px; }
+.rm-sym { color: var(--text-2); padding-left: 16px; border-left: 1px solid var(--border); margin-left: 6px;}
+.k-fn { color: #c4956a; }
+.k-class, .k-struct { color: #78a8d4; }
+.k-iface, .k-trait { color: #7ec77e; }
+.k-type, .k-enum { color: #d4b870; }
+.k-const { color: #b07ec4; }
+.k-mod { color: var(--text-3); }
+
+/* ─── File Tree ──────────────────────────────────────── */
+.tree-dir-header, .tree-file {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    font-size: 13px;
+    color: var(--text-2);
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background var(--transition);
+}
+.tree-dir-header:hover, .tree-file:hover { background: var(--bg-hover); color: var(--text-1); }
+
+.tree-arrow { font-size: 10px; width: 14px; text-align: center; color: var(--text-3); transition: transform 0.15s; }
+.tree-arrow.closed { transform: rotate(-90deg); }
+.tree-children { padding-left: 16px; border-left: 1px solid rgba(255,255,255,0.03); margin-left: 6px; }
+.tree-children.collapsed { display: none; }
+
+.tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-badge { font-size: 10px; color: var(--text-3); }
+
+.icon-svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+    object-fit: contain;
+}
+
+/* ─── Components ─────────────────────────────────────── */
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.8s linear infinite; }
+
+.toast {
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--text-1); color: var(--bg-app);
+    padding: 10px 24px; border-radius: 20px; font-size: 13px; font-weight: 600;
+    box-shadow: var(--shadow-panel); z-index: 1000;
+    animation: toastIn 0.3s ease;
+}
+@keyframes toastIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* ─── Hedge Principles Documentation View ───────────── */
+.hedge-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 32px 40px;
+    font-family: var(--font);
+    font-size: 16px;
+    line-height: 1.8;
+    letter-spacing: 0.015em;
+    color: var(--text-1);
+}
+
+.hedge-content h1 {
+    font-size: 26px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    letter-spacing: -0.01em;
+    color: var(--text-1);
+}
+
+.hedge-content h2 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-top: 36px;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-1);
+}
+
+.hedge-content h3 {
+    font-size: 17px;
+    font-weight: 600;
+    margin-top: 28px;
+    margin-bottom: 12px;
+    color: var(--text-1);
+}
+
+.hedge-content p {
+    margin-bottom: 16px;
+    color: var(--text-2);
+}
+
+.hedge-content strong {
+    color: var(--text-1);
+    font-weight: 600;
+}
+
+.hedge-content hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 24px 0;
+}
+
+.hedge-content ul, .hedge-content ol {
+    margin: 8px 0 16px 20px;
+    color: var(--text-2);
+}
+
+.hedge-content li {
+    margin-bottom: 6px;
+}
+
+.hedge-content code {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 2px 6px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--accent);
+}
+
+.hedge-content pre {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    margin: 12px 0 16px;
+    overflow-x: auto;
+}
+
+.hedge-content pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 12px;
+    color: var(--text-2);
+}
+
+.hedge-content blockquote {
+    border-left: 3px solid var(--accent);
+    padding: 8px 16px;
+    margin: 12px 0 16px;
+    background: var(--accent-bg);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    color: var(--text-2);
+    font-style: italic;
+}
+
+.hedge-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 16px;
+    font-size: 13px;
+}
+
+.hedge-content th {
+    text-align: left;
+    padding: 10px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    font-weight: 600;
+    color: var(--text-1);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.hedge-content td {
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    color: var(--text-2);
+}
+
+.hedge-content tr:hover td {
+    background: var(--bg-hover);
+}
+
+.hedge-content .subtitle {
+    font-size: 14px;
+    color: var(--text-3);
+    font-style: italic;
+    margin-bottom: 16px;
+}
+
+/* ─── Explorer Welcome State (no folder open) ────────── */
+.explorer-welcome {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 20px;
+    gap: 24px;
+    min-height: 0;
+}
+
+.open-folder-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px;
+    background: var(--bg-input);
+    color: var(--text-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition);
+    white-space: nowrap;
+}
+
+.open-folder-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-1);
+    border-color: var(--border-focus);
+}
+
+.open-folder-btn:active {
+    background: var(--bg-active);
+}
+
+/* Recent projects list */
+.recent-list {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.recent-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-3);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0 4px 6px;
+}
+
+.recent-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background var(--transition);
+    min-width: 0;
+}
+
+.recent-item:hover {
+    background: var(--bg-hover);
+}
+
+.recent-item:hover .recent-item-name {
+    color: var(--text-1);
+}
+
+.recent-item-icon {
+    color: var(--text-3);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+}
+
+.recent-item-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.recent-item-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: color var(--transition);
+}
+
+.recent-item-path {
+    font-size: 11px;
+    color: var(--text-3);
+    font-family: var(--mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ─── Repo Map: Stats Bar & Deep Analysis Button ─────── */
+.view-stats {
+    padding: 12px 24px 8px;
+    font-size: 12px;
+    color: var(--text-3);
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+}
+
+.stats-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Deep Analysis button — 3 states: idle / running / done */
+.deep-analysis-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-2);
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.deep-analysis-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-bg);
+}
+
+/* Running state — pulsing amber */
+.deep-analysis-btn.running {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-bg);
+    animation: btnPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes btnPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* Done state — subtle green tint */
+.deep-analysis-btn.done {
+    border-color: var(--green);
+    color: var(--green);
+}
+
+.deep-analysis-btn.done:hover {
+    background: rgba(126, 199, 126, 0.1);
+}
+
+/* Cache badge — small pill shown when cache is loaded */
+.cache-badge {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--green);
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid rgba(126, 199, 126, 0.3);
+    background: rgba(126, 199, 126, 0.08);
+    white-space: nowrap;
+}
+
+/* ─── Analysis Progress Bar ──────────────────────────── */
+.analysis-progress {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 24px 4px;
+    flex-shrink: 0;
+}
+
+.analysis-progress-bar {
+    flex: 1;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.analysis-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.4s ease;
+}
+
+.analysis-progress-text {
+    font-size: 11px;
+    color: var(--text-3);
+    white-space: nowrap;
+    min-width: 120px;
+    text-align: right;
+}
+
+/* ─── Scan Loading Overlay ───────────────────────────── */
+.scan-loading {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 20px 24px;
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--text-3);
+}
+
+.scan-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+/* ─── Repo Map: AI Summary Lines ─────────────────────── */
+.rm-ai-summary {
+    display: flex;
+    align-items: flex-start;
+    gap: 5px;
+    padding: 3px 0 5px 16px;
+    font-size: 11px;
+    color: var(--text-3);
+    font-style: italic;
+    line-height: 1.4;
+    font-family: var(--font);
+    opacity: 0;
+    animation: summaryFadeIn 0.4s ease forwards;
+}
+
+@keyframes summaryFadeIn {
+    from { opacity: 0; transform: translateY(-2px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.rm-ai-summary svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--accent);
+    opacity: 0.7;
+}
+
+.rm-ai-summary.rm-ai-error {
+    color: var(--red);
+    opacity: 1;
+}
+
+.rm-ai-summary.rm-ai-error svg {
+    color: var(--red);
+    opacity: 1;
+}
+
+/* Analyzing: three bouncing dots */
+.rm-ai-summary.analyzing {
+    gap: 3px;
+    padding-left: 16px;
+    opacity: 1;
+}
+
+.ai-dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+    display: inline-block;
+    animation: dotBounce 1.2s ease-in-out infinite;
+}
+
+.ai-dot:nth-child(2) { animation-delay: 0.15s; }
+.ai-dot:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes dotBounce {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+    40%            { transform: translateY(-4px); opacity: 1; }
+}
+
+/* ═══════════════════════════════════════════════════════
+   SHAPE-SPECIFIC VISUAL OVERRIDES
+   Run after base styles so they override per shape.
+   ═══════════════════════════════════════════════════════ */
+
+/* ─── Slab: directional light edges (立体石板) ─────────────
+   ONE coherent embossed frame on the outer window (#root),
+   light from top-left. Previously each of the 3 panels carried
+   its own inset, which after the IDE-style framing change
+   (panel-left/right use --bg-panel, panel-center inherits
+   --bg-app) made internal seams render as conflicting 2px
+   light+dark sandwiches at every panel boundary — visibly
+   inconsistent lines. The colour gap between --bg-panel and
+   --bg-app already provides the inter-panel separation, so the
+   inset just needs to sit on the window's outer perimeter. */
+[data-shape="slab"] #root {
+    box-shadow:
+        inset 1px 1px 0 0 var(--shape-edge-light-top),
+        inset -1px -1px 0 0 var(--shape-edge-light-bottom);
+}
+
+[data-shape="slab"] .chrome-tab.active {
+    box-shadow:
+        inset 1px 1px 0 0 var(--shape-edge-light-top),
+        inset -1px 0 0 0 var(--shape-edge-light-bottom);
+}
+
+/* Slab tabs use 3px micro-radius; the 12px chrome flare bridge doesn't
+   align with it and leaves a visible gap at the outer bottom corners.
+   Hide the flare and flatten the outer bottom so the tab sits flush. */
+[data-shape="slab"] .chrome-tab.active::before,
+[data-shape="slab"] .chrome-tab.active::after {
+    display: none;
+}
+
+[data-shape="slab"] .task-card,
+[data-shape="slab"] .launchpad-card,
+[data-shape="slab"] .guide-card,
+[data-shape="slab"] .remote-form-card,
+[data-shape="slab"] .chat-input-container {
+    box-shadow:
+        inset 1px 1px 0 0 var(--shape-edge-light-top),
+        inset -1px -1px 0 0 var(--shape-edge-light-bottom),
+        0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+[data-shape="sharp"] .chrome-tab.active,
+[data-shape="panel"] .chrome-tab.active {
+    box-shadow: inset 0 1px 0 0 var(--accent); /* VSCode-style 1px top accent bar */
+}
+
+/* Hide chrome flare pseudo-elements for zero-radius shapes */
+[data-shape="sharp"] .chrome-tab.active::before,
+[data-shape="sharp"] .chrome-tab.active::after,
+[data-shape="panel"] .chrome-tab.active::before,
+[data-shape="panel"] .chrome-tab.active::after {
+    display: none;
+}
+
+/* ─── Glass: Soft + transparency ─────────────────────────
+   Inherits Soft's radius. Drops body background so Tauri
+   `transparent: true` actually shows the OS desktop. Every
+   chrome surface (including the terminal — see CenterPanel
+   `hasBg` override) drops to translucency with the per-color
+   --glass-blur so it stays readable. No extra ornaments. */
+
+/* Single-source tint + frosted backdrop. body stays fully
+   transparent; #root (its direct child) carries both the
+   --glass-tint and the backdrop-filter blur. Why not put both
+   on body: WebView2 + Tauri `transparent: true` doesn't always
+   treat the OS desktop as a valid backdrop layer for
+   backdrop-filter on the root <body>, so the blur silently
+   no-ops. Moving to #root forces the filter onto a non-root
+   stacking context — Chromium then samples whatever's behind
+   it (body, transparent → OS desktop) and the blur takes effect
+   reliably. The 55% bg-app mix gives mostly-opaque tint while
+   the blur diffuses wallpaper colors underneath. */
+[data-shape="glass"] body {
+    background: transparent;
+}
+
+[data-shape="glass"] #root {
+    background: var(--glass-tint);
+    backdrop-filter: blur(24px) saturate(160%);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+}
+
+/* Glass hierarchy — ONE unified glass surface for the whole app.
+   Every directly-displayable chrome region carries the SAME
+   --glass-tint background; only the side panels add blur on top
+   (panel-center can't, WebView2 flicker bug). This way the app
+   reads as a single translucent plate of glass, not three
+   disconnected panes floating over the desktop.
+
+   Inner shells (.main-content, .panel-header, .explorer-content,
+   workspace-dir-btn, etc.) are stripped of their own bg/border
+   so they don't stack a second visible layer over the parent
+   region's tint — that was the source of the "层级混乱" feel. */
+
+[data-shape="glass"] {
+    /* Body's frosted layer — bumped from 32% → 55% so the tint
+       reads as "mostly there" against the wallpaper. Combined
+       with the backdrop blur(24px) on body, this lands solidly
+       in "frosted glass" territory: clearly tinted, wallpaper
+       colors still detectable but heavily diffused, text on top
+       reads cleanly. Push higher (65-75%) for near-opaque, drop
+       back toward 30-40% for "barely there" overlay. */
+    --glass-tint: color-mix(in oklab, var(--bg-app) 55%, transparent);
+}
+
+/* Tier 1 deleted — body alone carries the tint. Titlebar / 3
+   panels / every nested container all stay fully transparent so
+   the body's single layer of --glass-tint paints uniformly across
+   the whole app. Sibling tinted rectangles + asymmetric blur
+   (panel-left+right blurred, titlebar+center unblurred) was the
+   architectural reason left/right kept reading as a "second
+   layer" no matter how aggressively we stripped descendants. */
+[data-shape="glass"] .titlebar,
+[data-shape="glass"] .panel-left,
+[data-shape="glass"] .panel-center,
+[data-shape="glass"] .panel-right {
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+/* Tier 2 — single-layer principle, recursive + nuclear option.
+   The panels each paint --glass-tint exactly once. To guarantee
+   no descendant ever stacks a second visible layer, kill bg /
+   border-color / box-shadow on every <div> / <section> / <aside>
+   / <nav> / <header> / <footer> / <main> inside the 3 panels.
+   `:not()` excludes the explicit glass elements that DO carry
+   their own layer (cards, active segments, segmented containers).
+   Buttons / inputs / textareas / anchors aren't matched by the
+   element list at all, so their own hover/focus bgs are
+   untouched. */
+[data-shape="glass"] .panel-left :is(div, section, aside, nav, header, footer, main):not(.launchpad-card, .launchpad-card-group, .task-card, .task-droppable-area, .guide-card, .remote-form-card, .remote-form-overlay, .remote-protocol-toggle, .remote-pill, .chat-input-container, .library-item, .library-tabs, .ctx-menu, .gambit, .tool-config-modal, .tab-status-dot, .heatmap-cell),
+[data-shape="glass"] .panel-right :is(div, section, aside, nav, header, footer, main):not(.launchpad-card, .launchpad-card-group, .task-card, .task-droppable-area, .guide-card, .remote-form-card, .remote-form-overlay, .remote-protocol-toggle, .remote-pill, .chat-input-container, .library-item, .library-tabs, .ctx-menu, .gambit, .tool-config-modal, .tab-status-dot, .heatmap-cell),
+[data-shape="glass"] .panel-center :is(div, section, aside, nav, header, footer, main):not(.launchpad-card, .launchpad-card-group, .task-card, .task-droppable-area, .guide-card, .remote-form-card, .remote-form-overlay, .remote-protocol-toggle, .remote-pill, .chat-input-container, .library-item, .library-tabs, .ctx-menu, .gambit, .tool-config-modal, .tab-status-dot, .heatmap-cell) {
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+}
+
+/* Cards & inputs — same Liquid-Glass treatment as the active tab:
+   no heavy --bg-card mix (that stacked a 2nd layer over the
+   panel's --glass-tint), just a faint white wash so the card
+   reads as "elevated" above the panel, a 4-side white outline
+   tracing the rounded rect, and a brighter inset top edge as
+   the light-reflecting facet. backdrop-filter blur kept for the
+   refraction character.
+
+   .launchpad-card sits inside .launchpad-card-group which
+   already owns `border: 1px solid transparent + overflow:hidden +
+   border-radius`, so the outline goes on the wrapper (its
+   border becomes visible) and the wash/blur on the inner
+   .launchpad-card. Other card classes are standalone — they
+   carry their own outline. */
+/* Glass treatment goes on the rounded WRAPPER (.launchpad-card-
+   group), not the inner rectangular card. The wrapper already
+   carries border-radius + overflow:hidden; putting bg + blur on
+   the inner card creates a fresh stacking context whose backdrop-
+   filter paints into a GPU layer that leaks past the wrapper's
+   rounded clip — visible as 4 sharp corner residues. Move all
+   visual treatment up one level so everything paints inside the
+   rounded box. */
+[data-shape="glass"] .launchpad-card-group {
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow:
+        inset 0 1px 0 0 rgba(255, 255, 255, 0.22),
+        inset 0 -1px 0 0 rgba(0, 0, 0, 0.06);
+}
+[data-shape="glass"] .launchpad-card {
+    background: transparent;
+}
+
+[data-shape="glass"] .task-card,
+[data-shape="glass"] .guide-card,
+[data-shape="glass"] .chat-input-container,
+[data-shape="glass"] .library-item {
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    box-shadow:
+        inset 0 1px 0 0 rgba(255, 255, 255, 0.18);
+}
+
+/* Remote SSH/WS form card — heavier wash than other glass cards
+   on purpose: it's a one-shot input form (host / user / password),
+   readability of typed values trumps Liquid-Glass purity. Uses a
+   dark tint so text + input slots stay legible against any
+   wallpaper. */
+[data-shape="glass"] .remote-form-card {
+    background: rgba(18, 20, 28, 0.78);
+    backdrop-filter: blur(24px) saturate(160%);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow:
+        inset 0 1px 0 0 rgba(255, 255, 255, 0.18),
+        0 24px 64px rgba(0, 0, 0, 0.5);
+}
+
+/* Active tabs — switched from "3-edge outline" to "filled pill"
+   so they share visual language with the .library-tabs Agents/
+   Games segmented control. The right strip becomes a full
+   segmented-control container (bg + border + radius); the
+   center chrome strip stays transparent because it carries
+   variable tabs + a "+" button which doesn't fit the centered-
+   container metaphor — only its active tab becomes a pill. */
+
+/* Tab family — all THREE tab strips (chrome / Explorer /
+   TaskBoard) go fully transparent in glass. Active state is
+   indicated by text-1 color contrast alone (source default).
+   No container pill, no active fill, no outline. Matches the
+   "全部透明,只靠主背景半透层" architecture: every tab IS the
+   body's --glass-tint — adding any local bg would stack a
+   second visible layer.
+   Only .library-tabs (Agents/Games) keeps its segmented-control
+   pill style — it's a discrete control, not a tab strip. */
+[data-shape="glass"] .chrome-tab.active,
+[data-shape="glass"] .right-tab.active,
+[data-shape="glass"] .explorer-tab.active {
+    color: var(--text-1);
+}
+
+/* Card hover: kill the translateY lift so the cards stay still
+   when the cursor is over them. The lift was a Material-style
+   "elevation" cue that fights the Liquid-Glass aesthetic — glass
+   tiles don't bob, they just brighten subtly. Hover state is
+   still readable from the brightness/border change inherited
+   from the base card rule. */
+[data-shape="glass"] .launchpad-card-group:hover {
+    transform: none;
+}
+
+/* Library segmented toggle (Agents / Games at the bottom of the
+   tools full-list overlay). Container becomes a faint glass pill;
+   the active segment inside reads as "lit-up brighter glass"
+   instead of the original solid --accent fill, which clashed
+   visually with the rest of the glass language. */
+[data-shape="glass"] .library-tabs {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.10);
+    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+}
+
+[data-shape="glass"] .library-tab.active {
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--text-1);
+    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.24);
+    /* Concentric corners: the .library-tabs container uses
+       --radius-md with 4px padding, so its visible inner curve
+       is (md - 4px). The active segment must match that exactly,
+       otherwise its corners don't sit flush against the inner
+       wall of the container — that's the "圆角不一致" you saw. */
+    border-radius: calc(var(--radius-md) - 4px);
+}
+
+/* Floating popups + modals — ctx-menu (right-click + lang +
+   theme), tool-config-modal (per-agent launch settings).
+   Same faint-white-wash + 1px-white-outline + top-edge highlight
+   + outer drop shadow combo, so every floating overlay sits on
+   the same Liquid-Glass tier above the panels. */
+[data-shape="glass"] .ctx-menu {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    box-shadow:
+        inset 0 1px 0 0 rgba(255, 255, 255, 0.22),
+        0 12px 40px rgba(0, 0, 0, 0.40);
+}
+
+/* Per-tool config modal (gear icon on each card in the full
+   tools list) — same heavier wash as .remote-form-card: it's
+   an input form (launch args / env / cwd), readability of
+   typed values trumps Liquid-Glass purity. */
+[data-shape="glass"] .tool-config-modal {
+    background: rgba(18, 20, 28, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(24px) saturate(160%);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    box-shadow:
+        inset 0 1px 0 0 rgba(255, 255, 255, 0.18),
+        0 24px 64px rgba(0, 0, 0, 0.5);
+}
+
+/* Inputs inside the modal — match the cards' faint glass wash
+   so fields read as inset glass slots, not opaque text boxes. */
+[data-shape="glass"] .tool-config-input {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+}
+[data-shape="glass"] .tool-config-input:focus {
+    border-color: rgba(255, 255, 255, 0.22);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+/* Remote-terminal SSH/WS form inputs — same faint-glass slot
+   treatment as .tool-config-input so the form fields read as
+   inset glass, not opaque text boxes against the translucent
+   card. The wrapping .remote-form-card / .remote-form-overlay
+   / .remote-protocol-toggle / .remote-pill keep their original
+   styles via the allow-list above. */
+[data-shape="glass"] .remote-input {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+}
+[data-shape="glass"] .remote-input:focus {
+    border-color: rgba(255, 255, 255, 0.22);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+/* Modal scrim under the SSH/WS form + tool-config modal — kill it
+   entirely in Glass. The original 40-50%-black + blur was tuned
+   for opaque themes; stacked on a panel/app shell that already
+   carries the global glass blur, the overlay's own backdrop-filter
+   re-blurs the result and the user perceives "two layers of
+   transparency stacked". The floating cards alone (with their own
+   wash + drop-shadow) read as modal — no scrim needed. */
+[data-shape="glass"] .remote-form-overlay,
+[data-shape="glass"] .tool-config-backdrop {
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+/* Gambit floating chat card — full Liquid-Glass treatment.
+   Inherits ONLY the radius from the base .gambit rule. The whole
+   `--gambit-shadow` stack is dropped: layer 1 was a Soft-tone
+   1px ring, layer 2 was a 1px-blur tight halo at 80% — together
+   with our white-glass border they read as two concentric rings,
+   the "double border" symptom. Replaced with the same
+   single-layer drop shadow used by ctx-menu / tool-config-modal
+   so Gambit lives in the same overlay tier as them. */
+[data-shape="glass"] .gambit {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow:
+        inset 0 1px 0 0 rgba(255, 255, 255, 0.24),
+        0 12px 40px rgba(0, 0, 0, 0.40);
+}
+
+/* Chrome flare ::before/::after paint quarter-arc bridges in
+   opaque var(--bg-terminal) from the active tab into the terminal
+   bg below. In glass that bg is translucent --glass-tint, so the
+   opaque arcs read as stray dark dots at the tab's bottom corners.
+   Hide them. */
+[data-shape="glass"] .chrome-tab.active::before,
+[data-shape="glass"] .chrome-tab.active::after {
+    display: none;
+}
+
+/* ═══════════════════════════════════════════════════════
+   PANEL SHAPE — UNIFIED SURFACE (terminal multiplexer mode)
+   All surfaces collapse to a single base color. Only borders
+   separate regions, like Warp / tmux / iTerm2 split panes —
+   "drawn-on-terminal" feel. Placed AFTER theme blocks so the
+   cascade overrides their --bg-* values. Equal specificity,
+   later rule wins.
+   ═══════════════════════════════════════════════════════ */
+[data-shape="panel"] {
+    --bg-panel: var(--bg-app);
+    --bg-card: var(--bg-app);
+    --bg-input: var(--bg-app);
+    --bg-input-focus: var(--bg-app);
+    --bg-titlebar: var(--bg-app);
+    --bg-terminal: var(--bg-app);
+    /* Brighter border so dividers actually read on a same-color field;
+       otherwise the default --border (~4% alpha) vanishes. */
+    --border: rgba(255, 255, 255, 0.14);
+    --border-input: rgba(255, 255, 255, 0.14);
+    --shadow-panel: none;
+}
+
+/* Light theme inverts the divider color (white-on-white wouldn't show) */
+[data-shape="panel"][data-theme="light"] {
+    --border: rgba(0, 0, 0, 0.14);
+    --border-input: rgba(0, 0, 0, 0.14);
+}
+
+/* Glass blur on left panel would tint it differently from center/right.
+   Kill it so all three regions share one flat color.
+   No border-right/left here — the side dividers are owned by
+   .main-content's own borders. Doubling them up rendered as a chunky 2px
+   line. main-content's borders also become the app's outer edge cleanly
+   when a side panel is toggled hidden. */
+[data-shape="panel"] .panel-left {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+/* Titlebar reads as the top edge of the unified surface; a hairline
+   anchors it as a labeled bar instead of floating chrome. */
+[data-shape="panel"] .titlebar {
+    border-bottom: 1px solid var(--border);
+}
+
+/* ─── Side panel tab rows (左 explorer-tabs / 右 right-tabs) ─────
+   Default in every other shape: no container at all (segmented strip
+   inherits panel bg, active tab = text color contrast only).
+   Panel shape is the lone exception — a "drawn-on-terminal" chrome
+   aesthetic that wants a visible bordered rectangle around the tabs,
+   like classic tmux / iTerm2 split panes. */
+[data-shape="panel"] .explorer-tabs,
+[data-shape="panel"] .right-tabs {
+    border: 1px solid var(--border);
+}
+
+[data-shape="panel"] .explorer-tab,
+[data-shape="panel"] .right-tab {
+    padding: 8px 0;
+    border-radius: 0;
+}
+
+[data-shape="panel"] .explorer-tab + .explorer-tab,
+[data-shape="panel"] .right-tab + .right-tab {
+    border-left: 1px solid var(--border);
+}
+
+[data-shape="panel"] .explorer-tab.active,
+[data-shape="panel"] .right-tab.active {
+    background: var(--bg-hover);
+    color: var(--text-1);
+}
+
+/* ─── Center pane chrome-tabs + main-content as one drawn box ───
+   Active tab: 3-side outline (top, left, right) — bottom merges
+   into the content area below by overlapping the header divider.
+   Content area: left/right/bottom borders form the rest of the
+   enclosure; the chrome-tabs-header's border-bottom is the top. */
+[data-shape="panel"] .chrome-tabs-header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0;
+}
+
+/* All tabs (active + inactive) get the same -1px bottom margin in panel
+   mode. Two reasons:
+   1. The active tab's bg covers the chrome-tabs-header's border-bottom
+      directly under it — the "tab merges into content" terminal-tube look.
+   2. With ALL tabs (not just active) sharing the same margin-box height,
+      the chrome-tabs-header's intrinsic flex cross-size stays stable at
+      37px regardless of which tab is active or how many tabs exist.
+      Otherwise the container would grow 1px when going from 1-tab to
+      2-tabs (max child margin-box: 37 → 38), pushing main-content down
+      1px and visibly misaligning the active tab's top edge with the
+      Explorer panel header on the left. */
+[data-shape="panel"] .chrome-tab {
+    margin-bottom: -1px;
+}
+
+[data-shape="panel"] .chrome-tab.active {
+    background: var(--bg-app);
+    box-shadow:
+        inset 0 1px 0 0 var(--border),     /* top */
+        inset 1px 0 0 0 var(--border),     /* left */
+        inset -1px 0 0 0 var(--border);    /* right */
+}
+
+[data-shape="panel"] .main-content {
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+}
+
+/* ─── Launchpad cards: match library-item visual treatment ─────
+   Default launchpad uses card-group with hover translateY + shadow
+   ("modern card" feel). In panel mode we want the same flat,
+   bordered rectangle look as the Library/Agents page so the two
+   tool-selection surfaces read as one design language. */
+[data-shape="panel"] .launchpad-card-group {
+    border-radius: 0;
+    box-shadow: none;
+    border: 1px solid var(--border);
+    transition: background-color 0.15s, border-color 0.15s;
+}
+
+[data-shape="panel"] .launchpad-card-group:hover {
+    transform: none;             /* kill the upward translate */
+    box-shadow: none;
+    border-color: var(--accent);
+}
+
+[data-shape="panel"] .launchpad-card {
+    background: transparent;     /* card-group carries the border now */
+}
+
+[data-shape="panel"] .launchpad-card:hover {
+    background: var(--bg-hover);
+}

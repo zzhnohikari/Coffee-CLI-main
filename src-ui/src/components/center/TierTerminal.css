@@ -1,0 +1,405 @@
+/* TierTerminal.css — Pure terminal container styles */
+
+/* ─── Shell Layout ──────────────────────────────────────────── */
+.tier-terminal {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* ─── Custom Background Layer ──────────────────────────────── */
+.tier-terminal-bg {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.tier-terminal-bg img,
+.tier-terminal-bg video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+/* User-controlled dim overlay. Same --wallpaper-dim variable as launchpad. */
+.tier-terminal-bg::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, var(--wallpaper-dim, 0.3));
+    pointer-events: none;
+}
+
+
+/* ─── xterm.js container ────────────────────────────────────── */
+.tier-xterm-wrap {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    /* `overflow: clip` (not `hidden`) blocks focus-induced ancestor scrolling.
+       When IME activates, xterm moves .xterm-helper-textarea inline `left` to
+       track the cursor column. If that position exceeds the visible width,
+       the browser's focus-scroll pass tries to scroll this container to bring
+       the textarea into view — pushing the xterm canvas to the left. `hidden`
+       still creates a scroll container (scrollLeft is settable), so browser
+       targets it. `clip` creates no scroll container; browser skips past it. */
+    overflow: clip;
+    overflow-clip-margin: 0;
+    background: transparent;
+    position: relative;
+    z-index: 1;  /* above .tier-terminal-bg */
+    /* Padding lives HERE so FitAddon reads the correct content-box dimensions.
+       FitAddon reads parentElement.clientWidth — putting padding on the inner
+       .xterm element (which FitAddon never sees) caused a ~3-col mismatch that
+       made PTY width > visual rendering area, breaking TUI adaptive layouts. */
+    padding: 20px 0 20px 24px; /* 0 right so scrollbar docks to the edge */
+}
+
+.tier-xterm {
+    width: 100%;
+    height: 100%;
+}
+
+/* xterm.js overrides — match our design */
+.tier-xterm .xterm {
+    padding: 0; /* Padding is on .tier-xterm-wrap; do not add padding here */
+    /* `overflow: clip` (not `hidden`) — see .tier-xterm-wrap for why.
+       Browser focus-scroll walks up ancestors looking for the nearest scroll
+       container. `.xterm` is closer to .xterm-helper-textarea than .tier-xterm-wrap,
+       so the browser targets THIS element first. It must also be `clip` or the
+       focus-scroll escapes the wrap-level fix. */
+    overflow: clip;
+    overflow-clip-margin: 0;
+}
+
+/* IME fix: override xterm's default left:-9999em so the browser never
+   tries to scroll-to-focus the far-offscreen textarea.  At left:0 it is
+   invisible (opacity:0) but in-view.  xterm's _syncTextArea() then sets
+   inline style.left to the cursor column — inline styles beat this rule,
+   so the OS IME candidate window tracks the real cursor position.
+   DO NOT use !important — it blocks the inline-style updates and breaks
+   multi-monitor IME positioning.
+   DO NOT add overflow:hidden to .xterm-helpers — it is a 0×0 abs-pos
+   container; clipping it prevents the OS from reading textarea coords. */
+.tier-xterm .xterm .xterm-helper-textarea {
+    left: 0;
+    min-width: 1px;  /* some CJK IMEs (QQ Pinyin, Rime) fail on a 0-width textarea */
+    min-height: 1px;
+}
+
+.tier-xterm .xterm-viewport {
+    border-radius: 0;
+    background: transparent !important;
+}
+
+/* xterm.js ships a DOM-drawn scrollbar (ported from VSCode —
+   `.xterm-scrollable-element > .scrollbar`), which renders as a
+   real <div>, NOT a `::-webkit-scrollbar` pseudo-element. That's
+   why the global `display: none` for native scrollbars in
+   styles/global.css couldn't reach it — different rendering path
+   entirely. Kill it directly here. */
+.tier-xterm .xterm-scrollable-element > .scrollbar {
+    display: none !important;
+}
+
+/* Completely hide native xterm cursor */
+.tier-xterm .xterm-cursor,
+.tier-xterm .xterm-cursor-layer {
+    display: none !important;
+    opacity: 0 !important;
+}
+
+/* In TUI mode the tool manages its own scrolling internally
+   (vim, htop, claude alt-screen) — disable browser-side scroll
+   on the xterm viewport so wheel events are forwarded raw to
+   the PTY instead of moving the host scrollback. Scrollbar
+   hiding is handled globally in styles/global.css. */
+.tier-xterm.tui-inverted .xterm-viewport {
+    overflow: hidden !important;
+}
+
+/* ─── Startup Loading Splash ───────────────────────────────── */
+.tier-loading-splash {
+    position: absolute;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.tier-loading-splash.fade-out {
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* Inner group — icon + label + dots are tightly grouped together */
+.splash-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Animated coffee icon container */
+.splash-icon {
+    width: 48px;
+    height: 48px;
+    color: var(--accent, #C4956A);
+}
+
+/* Tool name label.
+ *
+ * Two visual treatments:
+ *   - Latin text  → italic serif "art font" (Lora-falling-back-to-Georgia),
+ *                   reads as elegant / cursive, the "premium greeting" feel.
+ *   - CJK text    → stable bold display, because no real italic exists in
+ *                   the serif fallback chain for Han / Kana / Hangul and
+ *                   browsers algorithmically slant CJK glyphs into mush.
+ *
+ * The discriminator is the SPLASH TEXT's own language, not the UI language:
+ * a Chinese-UI user opening Claude Code still sees "Claude Code" (English)
+ * on the splash and should get the art font; the same user opening 人格测试
+ * sees Chinese and needs the stable display. Components compute this in JS
+ * (regex test for CJK codepoints) and set `lang="en"` or `lang="zh"` on the
+ * splash <span>, which then drives the :lang() selector below.
+ */
+.splash-label {
+    font-family: var(--font-serif, var(--font));
+    font-size: 20px;
+    color: var(--text-1);
+    /* Default = italic serif art font (covers lang="en" / Latin text). */
+    font-style: italic;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    /* Premium feel: edge smoothing + theme-aware soft halo.
+     *
+     * Stacked text-shadow does two distinct jobs:
+     *   1. `0 0 1px currentColor` — a one-pixel same-color halo around every
+     *      glyph. On Windows Chromium / WebView2, -webkit-font-smoothing is
+     *      a no-op (it only works on macOS WebKit) and the OS falls back to
+     *      ClearType subpixel rendering, which produces visible RGB fringes
+     *      on italic-serif curves over dark backgrounds. The 1px same-color
+     *      halo "fattens" stroke edges by one subpixel so those fringes
+     *      blend back into the glyph and the edge reads as smooth.
+     *   2. `0 0 18px <accent>` — a wide low-alpha glow in the theme's
+     *      accent tone (matching the splash icon + three-dot pulse beneath
+     *      it), giving the label a luminous "lit-from-behind" presence
+     *      rather than just sitting flat.
+     *
+     * Earlier this used rgba(var(--shadow-rgb), 0.45). That worked for the
+     * accent-tinted dark themes but broke the light theme — its --shadow-rgb
+     * is intentionally `0, 0, 0` (so cards cast neutral grey shadows), which
+     * turned the splash halo into a black ink bleed against the white panel
+     * (issue: "loading 文字光晕" in light theme). Using --accent via
+     * color-mix() locks the halo to whatever accent that theme already shows
+     * on the icon and dots — light gets warm tan, sakura gets pink, moss
+     * gets green, etc. — and it stays consistent across all 9 themes.
+     *
+     * -webkit-font-smoothing / -moz-osx-font-smoothing — kept for macOS
+     * users where they actually do something (switch from subpixel-AA to
+     * grayscale-AA). No-op on Windows but harmless.
+     * text-rendering — enable kerning + ligatures for the serif art font.
+     */
+    text-shadow:
+        0 0 1px currentColor,
+        0 0 18px color-mix(in srgb, var(--accent) 35%, transparent);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+/* CJK override — kicks in when the splash <span> sets lang="zh" / "ja" / "ko". */
+.splash-label:lang(zh),
+.splash-label:lang(ja),
+.splash-label:lang(ko) {
+    font-style: normal;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+}
+
+/* Three-dot loading indicator */
+.splash-dots {
+    display: flex;
+    gap: 6px;
+    margin-top: 2px;
+}
+
+.splash-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent, #C4956A);
+    animation: splash-dot-pulse 1.4s ease-in-out infinite;
+}
+
+.splash-dot:nth-child(2) { animation-delay: 0.2s; }
+.splash-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes splash-dot-pulse {
+    0%, 80%, 100% { transform: scale(0.5); opacity: 0.3; }
+    40% { transform: scale(1); opacity: 1; }
+}
+
+/* ─── Terminal & Gambit Context Menu ───────────────────────────
+   All visible colors come from theme variables (matches the left
+   directory tree's .ctx-menu treatment). Earlier hard-coded values
+   like background:#1c1c1c, border:rgba(255,255,255,0.08), and the
+   pure-black box-shadow looked correct only in the dark theme and
+   produced opaque black blobs on light/sakura/lavender/mint themes. */
+.term-ctx-menu {
+    position: fixed;
+    z-index: 9999;
+    min-width: 156px;
+    padding: 4px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 6px);
+    box-shadow: var(--shadow-panel);
+    backdrop-filter: var(--glass-blur);
+    animation: ctx-appear 0.1s cubic-bezier(0.2, 0, 0.2, 1);
+    user-select: none;
+}
+
+@keyframes ctx-appear {
+    from { opacity: 0; transform: scale(0.94) translateY(-4px); }
+    to   { opacity: 1; transform: scale(1)   translateY(0);     }
+}
+
+.term-ctx-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 6px 10px;
+    gap: 20px;
+    border: none;
+    background: transparent;
+    color: var(--text-2);
+    font-size: 13px;
+    font-family: inherit;
+    border-radius: 4px;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.08s, color 0.08s;
+}
+
+.term-ctx-item:hover:not(.disabled) {
+    background: var(--bg-hover);
+    color: var(--text-1);
+}
+
+.term-ctx-item.disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+.term-ctx-item kbd {
+    font-size: 11px;
+    font-family: inherit;
+    font-weight: 400;
+    opacity: 0.55;
+    white-space: nowrap;
+}
+
+.term-ctx-sep {
+    height: 1px;
+    margin: 3px 6px;
+    background: var(--border);
+}
+
+/* ─── Mid-session Process Exit Banner ──────────────────────── */
+/* Shows when the child process dies AFTER the terminal had produced output.
+   Non-covering top bar so the user keeps visibility into the scrollback and
+   understands why the terminal stopped responding, instead of assuming the
+   whole app is frozen. */
+.tier-process-exited-banner {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 85;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: rgba(196, 93, 93, 0.15);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(196, 93, 93, 0.35);
+    color: rgba(228, 178, 178, 0.95);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    animation: procExitedFadeIn 0.3s ease;
+    pointer-events: none; /* lets user still click through to xterm */
+}
+
+[data-theme="light"] .tier-process-exited-banner {
+    background: rgba(196, 93, 93, 0.12);
+    border-color: rgba(196, 93, 93, 0.3);
+    color: rgb(146, 50, 50);
+}
+
+@keyframes procExitedFadeIn {
+    from { opacity: 0; transform: translate(-50%, -4px); }
+    to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ─── Launch Failure Fallback Overlay ──────────────────────── */
+.tier-launch-failed {
+    position: absolute;
+    inset: 0;
+    z-index: 90;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    animation: launchFailedFadeIn 0.5s ease;
+}
+
+@keyframes launchFailedFadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.launch-failed-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    max-width: 320px;
+    text-align: center;
+}
+
+.launch-failed-title {
+    font-family: var(--font-serif, var(--font));
+    font-size: 20px;
+    font-weight: 500;
+    color: var(--text-1);
+    letter-spacing: 0.02em;
+    font-style: italic;
+}
+
+.launch-failed-hint {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--accent, #C4956A);
+    opacity: 0.9;
+}
+
+.launch-failed-sub {
+    font-size: 12px;
+    color: var(--text-2, #9e9c98);
+    opacity: 0.6;
+    line-height: 1.5;
+}

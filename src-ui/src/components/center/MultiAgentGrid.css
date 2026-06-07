@@ -1,0 +1,755 @@
+/* MultiAgentGrid.css — "4 paper slices" layout.
+   User-defined aesthetic (2026-04-23): each pane must feel identical to
+   a single-terminal tab. No border, no card background, no internal
+   padding, no header strip. Only the active pane is rendered at full
+   brightness; the other three dim down. A tiny 1/2/3/4 badge in the
+   top-right of each pane uses the active theme accent.
+   Follows CLAUDE.md §4 (no native tooltips, no transform hover). */
+
+.multi-agent-grid-standalone {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  /* No gap, no padding — four terminals sit edge-to-edge like paper slices. */
+  /* position:relative anchors the absolute-positioned .multi-agent-bg
+     layer inside, so the user's wallpaper renders behind all four panes
+     (including empty ones showing the CLI picker). */
+  position: relative;
+}
+
+/* Grid-level wallpaper layer. Identical behavior to .launchpad-bg so
+   switching between Launchpad and a multi-agent Tab has zero visual
+   discontinuity in the background. */
+.multi-agent-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.multi-agent-bg img,
+.multi-agent-bg video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* User-controlled dim overlay (--wallpaper-dim is set on :root from
+   app-state, 0.0–0.8). Same formula as .launchpad-bg::after for
+   consistent brightness across surfaces. */
+.multi-agent-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, var(--wallpaper-dim, 0.3));
+  pointer-events: none;
+}
+
+/* Make sure panes sit above the bg layer regardless of DOM order. */
+.multi-agent-grid-standalone > .multi-agent-pane {
+  z-index: 1;
+}
+
+/* Default 2×2 quadrant. */
+.multi-agent-grid--grid {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+/* 1×N vertical strip: N equal-height columns side by side. Useful
+   for screens wider than tall, or when the user wants each agent's
+   output visible as a continuous vertical stream. Slot numbering is
+   driven by CSS order of the N columns, not the 2x2 grid-areas,
+   so pane-slot-N → Nth column.
+
+   The `--columns-{2,3,4}` variant determines how many columns the grid
+   gets. Without a variant class, defaults to 4 for backward compat. */
+.multi-agent-grid--columns {
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: 1fr;
+}
+.multi-agent-grid--columns-2 { grid-template-columns: repeat(2, 1fr); }
+.multi-agent-grid--columns-3 { grid-template-columns: repeat(3, 1fr); }
+.multi-agent-grid--columns-4 { grid-template-columns: repeat(4, 1fr); }
+.multi-agent-grid--columns .multi-agent-pane.pane-slot-1 { grid-column: 1; grid-row: 1; }
+.multi-agent-grid--columns .multi-agent-pane.pane-slot-2 { grid-column: 2; grid-row: 1; }
+.multi-agent-grid--columns .multi-agent-pane.pane-slot-3 { grid-column: 3; grid-row: 1; }
+.multi-agent-grid--columns .multi-agent-pane.pane-slot-4 { grid-column: 4; grid-row: 1; }
+
+.multi-agent-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  /* No border / background / radius — blend into the tab surface. */
+  /* Only allowed animation: opacity (no position/scale per §4). */
+  transition: opacity 160ms ease;
+}
+
+/* Slot numbering matches the visible badge (1 = top-left, 2 = top-right,
+   3 = bottom-left, 4 = bottom-right). Reading order Z.
+   SCOPED UNDER `--grid` so these 2×2 placements only apply to the 2×2
+   quadrant mode. Without this scope, the 2-pane and 3-pane splits
+   (which set grid-template-columns inline via FourSplitGrid paneCount)
+   would have pane-slot-3 pinned to row 2, breaking the side-by-side
+   layout. Columns mode has its own scoped pane-slot rules above. */
+.multi-agent-grid--grid .multi-agent-pane.pane-slot-1 { grid-column: 1; grid-row: 1; }
+.multi-agent-grid--grid .multi-agent-pane.pane-slot-2 { grid-column: 2; grid-row: 1; }
+.multi-agent-grid--grid .multi-agent-pane.pane-slot-3 { grid-column: 1; grid-row: 2; }
+.multi-agent-grid--grid .multi-agent-pane.pane-slot-4 { grid-column: 2; grid-row: 2; }
+
+/* Focus handling: when any pane's xterm has keyboard focus, the other
+   three fade so the user's eye follows the typing cursor. Default
+   (no focus) shows all panes at full brightness. */
+.multi-agent-pane.is-dimmed {
+  opacity: 0.35;
+}
+
+.multi-agent-pane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ─── Pane number badge ─────────────────────────────────────────────
+   Large elegant 1/2/3/4 in the top-right of every pane. Uses the app's
+   display font (not monospace) at a light weight for a gentle but
+   visible marker. Accent-tinted so it re-colors with the theme palette.
+   Tabular numerals keep the digits the same width across panes. */
+/* Industrial-style pane-number tag. Sharp-cornered square filled
+   with a darkened tint of the theme accent, bold white number
+   centered inside. The darker fill is produced by mixing the
+   accent with 45% black — keeps the theme hue, but high enough
+   contrast against white text to read at a glance. Small and
+   blocky on purpose: feels like a physical label, not a UI chip. */
+.pane-number-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 200;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* color-mix: 55% theme accent + 45% black. Well-supported since
+     Chrome 111 / Safari 16.4; Tauri's WebView2 is Edge-based and
+     supports it. Fallback uses the raw accent — acceptable. */
+  background: color-mix(in srgb, var(--accent, #6cc275) 55%, #000);
+  border-radius: 0;
+  border: none;
+  padding: 0;
+  font-size: 14px;
+  font-family: var(--font-display, 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif);
+  font-weight: 700;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+  line-height: 1;
+  color: #fff;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* Active-pane badge variant — interactive close button. The × is only
+   revealed on hover (see .pane-badge-num / .pane-badge-x below), so the
+   idle state reads identical to the empty-pane badge and the user only
+   sees "close" affordance when they're reaching for it. */
+.pane-number-badge--closable {
+  pointer-events: auto;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.pane-number-badge--closable:hover {
+  /* Claude-brand orange (#D97757). Same tone used for Claude's
+     executing-state dot in the tab strip — "about to do something
+     consequential" reads the same across the app. */
+  background: #d97757;
+}
+
+.pane-number-badge--closable:active {
+  filter: brightness(0.92);
+}
+
+.pane-badge-num,
+.pane-badge-x {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.pane-badge-x {
+  display: none;
+  font-size: 18px;
+  font-weight: 600;
+  /* × glyph sits optically low at this weight — lift a pixel so the
+     geometric center of the cross matches where the digit sat. */
+  transform: translateY(-1px);
+}
+
+.pane-number-badge--closable:hover .pane-badge-num { display: none; }
+.pane-number-badge--closable:hover .pane-badge-x   { display: flex; }
+
+/* ─── Empty-pane picker (simpler, no card) ──────────────────────── */
+
+.empty-pane-picker {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 20px;
+  gap: 14px;
+  color: var(--text-secondary, #aaa);
+}
+
+.empty-pane-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary, #ddd);
+}
+
+.empty-pane-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  justify-content: center;
+  width: min(420px, 100%);
+}
+
+.empty-pane-option-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.empty-pane-option {
+  padding: 9px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-1, #e9e9ea);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--accent, #6cc275) 28%, transparent);
+  border-radius: var(--shape-radius-button, 6px);
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+  flex: 1 1 auto;
+}
+
+.empty-pane-option:hover {
+  background: color-mix(in srgb, var(--accent, #6cc275) 12%, transparent);
+  border-color: var(--accent, #6cc275);
+  color: var(--accent, #6cc275);
+}
+
+.empty-pane-option:active {
+  background: color-mix(in srgb, var(--accent, #6cc275) 20%, transparent);
+}
+
+/* Disabled state — the CLI binary is not installed on this machine.
+   Visual parity with .launchpad-card-disabled (opacity 0.35 + not-allowed)
+   so users recognize the same "greyed = not installed" language from the
+   Desktop launchpad. The button is fully inert — no hover tint, no click. */
+.empty-pane-option:disabled,
+.empty-pane-option.is-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.empty-pane-option--primary {
+  min-width: 0;
+}
+
+.empty-pane-option--secondary {
+  flex: 0 0 auto;
+  min-width: 84px;
+}
+
+.empty-pane-history {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  padding: 18px 18px 20px;
+  color: var(--text-1, #e9e9ea);
+  overflow: hidden;
+}
+
+.empty-pane-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.empty-pane-history-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1, #e9e9ea);
+}
+
+.empty-pane-history-title-sep {
+  opacity: 0.45;
+}
+
+.empty-pane-history-close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-2, #b5b0aa);
+  width: 24px;
+  height: 24px;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.empty-pane-history-close:hover {
+  background: color-mix(in srgb, var(--text-2, #aaa) 10%, transparent);
+  color: var(--text-1, #e9e9ea);
+}
+
+.empty-pane-history-search {
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--accent, #6cc275) 18%, transparent);
+  background: color-mix(in srgb, var(--bg-app, #161514) 82%, transparent);
+  color: var(--text-1, #e9e9ea);
+  border-radius: var(--shape-radius-button, 8px);
+  padding: 9px 12px;
+  font-size: 13px;
+  outline: none;
+}
+
+.empty-pane-history-search:focus {
+  border-color: var(--accent, #6cc275);
+}
+
+.empty-pane-history-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 8px;
+  scrollbar-gutter: stable;
+}
+
+.empty-pane-history-item {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--accent, #6cc275) 12%, transparent);
+  background: color-mix(in srgb, var(--bg-app, #161514) 76%, transparent);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  color: var(--text-1, #e9e9ea);
+  cursor: pointer;
+}
+
+.empty-pane-history-item:hover {
+  border-color: color-mix(in srgb, var(--accent, #6cc275) 38%, transparent);
+  background: color-mix(in srgb, var(--accent, #6cc275) 8%, transparent);
+}
+
+.empty-pane-history-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1, #e9e9ea);
+}
+
+.empty-pane-history-item-meta {
+  font-size: 11px;
+  color: var(--text-2, #b5b0aa);
+}
+
+.empty-pane-history-item-cwd {
+  font-size: 11px;
+  color: var(--text-3, #8e8880);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.empty-pane-history-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  color: var(--text-2, #b5b0aa);
+  font-size: 12px;
+  text-align: center;
+  padding: 0 10px;
+}
+
+.empty-pane-profile-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: color-mix(in srgb, var(--bg-app, #161514) 94%, transparent);
+  padding-bottom: 6px;
+}
+
+.empty-pane-profile-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(6px);
+  overflow: auto;
+  pointer-events: auto;
+}
+
+.empty-pane-profile-modal {
+  width: min(1280px, 96vw);
+  max-height: min(90vh, 960px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--accent, #6cc275) 14%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-app, #161514) 96%, transparent);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.empty-pane-profile-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 18px 10px;
+  flex: 1 1 auto;
+  width: 100%;
+  max-height: none;
+  overflow: auto;
+  padding-right: 10px;
+}
+
+.empty-pane-profile-textarea {
+  min-height: 72px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.empty-pane-profile-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-2, #b5b0aa);
+}
+
+.empty-pane-profile-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding-top: 8px;
+  background: color-mix(in srgb, var(--bg-app, #161514) 94%, transparent);
+}
+
+.empty-pane-profile-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: 10px;
+  align-items: start;
+  overflow: visible;
+}
+
+.empty-pane-profile-launch {
+  flex: 1 1 auto;
+  min-height: 70px;
+}
+
+.empty-pane-profile-inline-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 96px;
+  flex-shrink: 0;
+  align-self: stretch;
+}
+
+.empty-pane-profile-inline-actions .empty-pane-option {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.empty-pane-profile-section {
+  border: 1px solid color-mix(in srgb, var(--accent, #6cc275) 10%, transparent);
+  border-radius: 10px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--bg-app, #161514) 78%, transparent);
+}
+
+.empty-pane-profile-section-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: transparent;
+  border: 0;
+  color: var(--text-1, #e9e9ea);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.empty-pane-profile-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.empty-pane-profile-section-body--scroll {
+  max-height: min(52vh, 520px);
+  overflow-y: auto;
+  padding-right: 8px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.empty-pane-profile-section-body--scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.empty-pane-profile-section-body--scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent, #6cc275) 28%, transparent);
+  border-radius: 999px;
+}
+
+.empty-pane-profile-section-body--scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.empty-pane-profile-picklist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.empty-pane-profile-picklist--tall {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: none;
+}
+
+.empty-pane-profile-advanced-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+@media (max-width: 1180px) {
+  .empty-pane-profile-advanced-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.empty-pane-profile-picklist-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2, #b5b0aa);
+}
+
+.empty-pane-profile-pills {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+  min-height: 0;
+}
+
+.empty-pane-profile-pills--scroll {
+  height: 220px;
+  overflow-y: scroll;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  align-content: flex-start;
+}
+
+.empty-pane-profile-pills--scroll::-webkit-scrollbar {
+  width: 12px;
+}
+
+.empty-pane-profile-pills--scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent, #6cc275) 36%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.empty-pane-profile-pills--scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.empty-pane-profile-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent, #6cc275) 18%, transparent);
+  background: color-mix(in srgb, var(--bg-app, #161514) 86%, transparent);
+  color: var(--text-2, #b5b0aa);
+  font-size: 12px;
+  min-width: 0;
+}
+
+.empty-pane-profile-pill.is-selected {
+  border-color: var(--accent, #6cc275);
+  color: var(--accent, #6cc275);
+  background: color-mix(in srgb, var(--accent, #6cc275) 12%, transparent);
+}
+
+.empty-pane-profile-pill--muted {
+  opacity: 0.7;
+}
+
+.empty-pane-profile-helptext {
+  min-height: 0;
+  padding: 2px 2px 0;
+  text-align: left;
+  color: var(--text-2, #b5b0aa);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.empty-pane-history-list::-webkit-scrollbar,
+.empty-pane-profile-editor::-webkit-scrollbar {
+  width: 8px;
+}
+
+.empty-pane-history-list::-webkit-scrollbar-thumb,
+.empty-pane-profile-editor::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent, #6cc275) 28%, transparent);
+  border-radius: 999px;
+}
+
+.empty-pane-history-list::-webkit-scrollbar-track,
+.empty-pane-profile-editor::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ─── Sentinel Protocol toggle ────────────────────────────────────
+   macOS/iOS-style sliding pill switch. Visually separated from the
+   CLI button row above by a hairline divider + margin so it feels
+   like a distinct configuration area, not an afterthought tacked on
+   after the buttons. */
+
+.sentinel-toggle-row {
+  display: flex;
+  justify-content: center;
+  width: min(420px, 100%);
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--text-2, #aaa) 12%, transparent);
+}
+
+.sentinel-toggle-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 140ms ease;
+}
+
+.sentinel-toggle-head:hover {
+  background: color-mix(in srgb, var(--text-2, #aaa) 8%, transparent);
+}
+
+.sentinel-toggle-label {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-1, #e9e9ea);
+  font-family: var(--font-display, inherit);
+}
+
+/* iOS-style switch. Clicking the whole area flips the state via the
+   parent's onClick — transition kept off translation per CLAUDE.md §4
+   (pure background fade + knob slide). */
+.sentinel-switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--text-2, #aaa) 22%, transparent);
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transition: background-color 200ms ease, box-shadow 200ms ease;
+  flex-shrink: 0;
+}
+
+.sentinel-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: transform 200ms cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+.sentinel-switch.is-on {
+  background: var(--accent, #6cc275);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #6cc275) 22%, transparent);
+}
+
+.sentinel-switch.is-on::after {
+  transform: translateX(18px);
+}
+
+/* Small green dot at the bottom-right of an active pane's number badge
+   — appears when Sentinel Protocol has detected a [COFFEE-DONE:paneN]
+   marker recently (within 30 minutes). */
+.pane-completion-dot {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e; /* bright green, distinct from accent color */
+  box-shadow: 0 0 4px rgba(34, 197, 94, 0.6);
+  pointer-events: none;
+}

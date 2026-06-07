@@ -1,0 +1,119 @@
+# Rust
+/target
+target*/
+.cargo-target*/
+*.pdb
+
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+src-ui/node_modules/
+src-ui/dist/
+src-ui/.vite/
+src-ui/.vite-cache*/
+
+# Tauri generated
+src-tauri/target/
+/gen
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# GitHub Actions are kept local unless the token has workflow scope.
+.github/workflows/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+*.lnk
+
+# Large local media captures
+*.mov
+
+# Environment & secrets
+.env
+.env.local
+models.json
+
+# Internal design / strategy docs — kept locally, never published.
+# Public-facing positioning lives on Web-Home; in-flight feature designs
+# and competitor research stay private until a launch warrants disclosure.
+docs/
+
+# AI agent guardrails — kept locally so Claude Code reads them on every
+# session, but not published. CLAUDE.md is the team's candid "how to
+# work in this repo" memo (release pitfalls we've hit, tooling rules
+# we've broken N times, CF Worker routing internals); it's not the
+# contributor guide. A public-facing CONTRIBUTING.md, when needed,
+# should be authored separately.
+CLAUDE.md
+
+# Dev artifacts, scripts & logs
+*.log
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+run-dev.bat
+run-dev-release.bat
+scripts/clean-dictionary.js
+scripts/merge-taekchef-dict.js
+scripts/taekchef-translations.json
+logo.png
+logo.svg
+src-ui/gen-icon.mjs
+src-ui/README.md
+src-ui/src/assets/hero.png
+src-ui/src/assets/react.svg
+src-ui/src/assets/vite.svg
+src/bin_test.rs
+src/translation.rs_test_append
+DEVELOPMENT_PROGRESS.md
+claude_help*.txt
+check_err.txt
+diff.txt
+error.log
+cargo_check_output.txt
+
+# Legacy / temp
+/ui
+/reference
+ico.png
+dev.bat
+/2
+tmp/
+tmp_*/
+tmp_check/
+tmp_check.txt
+test-artifacts/
+/backup-0.1.15/
+fragments.json
+missing.json
+merge_claude_dict.js
+cargo_err.txt
+cargo_out.txt
+
+# Root-level node (Tauri plugin installed at root)
+/package.json
+/package-lock.json
+
+# Agent config (local dev)
+.agent/
+.claude/
+
+# Sidecar build artifacts
+.free-code-build/
+binaries/
+
+# Upstream dev sources
+.test-opencode
+# Game bundles and raw files (user-downloaded to ~/.coffee-cli/play/ at runtime, or local dev files)
+/play/

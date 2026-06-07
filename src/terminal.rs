@@ -1,0 +1,2259 @@
+// terminal.rs — Tier Terminal PTY backend
+// Uses portable-pty (WezTerm's cross-platform PTY library) for reliable
+// ConPTY support on Windows and native PTY on Unix.
+// Streams raw PTY bytes to xterm.js verbatim; only OSC 7 (cwd change) is
+// extracted server-side for the workspace tree.
+
+use serde::Serialize;
+use std::collections::{HashMap, VecDeque};
+use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter};
+
+/// Set by the frontend on `document.visibilitychange`. When true, every
+/// per-session worker thread (ticker, emitter) widens its sleep / coalesce
+/// window so a Coffee CLI window left in the background drops to near-zero
+/// CPU instead of paying full 8ms / 500ms cadence forever. Apple Silicon
+/// laptops in particular treat this as the difference between fan-on and
+/// idle thermal envelope.
+pub static BACKGROUND_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Extract the path from an OSC 7 cwd notification if present in the chunk.
+/// OSC 7 format: ESC ] 7 ; file://<host>/<path> (BEL or ESC \)
+/// Returns the percent-decoded `<path>` portion (with leading `/`), or None.
+fn extract_osc7_cwd(data: &[u8]) -> Option<String> {
+    let prefix = b"\x1b]7;file://";
+    let start = data.windows(prefix.len()).position(|w| w == prefix)? + prefix.len();
+    let rest = &data[start..];
+    let end = rest.iter().position(|&b| b == 0x07 || b == 0x1b)?;
+    let raw = std::str::from_utf8(&rest[..end]).ok()?;
+    // Skip hostname: keep everything from the first `/` onward.
+    let path_start = raw.find('/')?;
+    let path = &raw[path_start..];
+    // Percent-decode (basic %XX handling)
+    let bytes = path.as_bytes();
+    let mut decoded: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(s) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
+                if let Ok(b) = u8::from_str_radix(s, 16) {
+                    decoded.push(b);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        decoded.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(decoded).ok()
+}
+
+// ─── Claude Code preflight ────────────────────────────────
+//
+// Why: Claude Code's `/theme auto` queries the host terminal via OSC 11 and
+// renders light- or dark-theme based on the response. xterm.js answers OSC 11
+// with whatever we set on `theme.background`, which Coffee CLI flips between
+// `#1a1917` (dark) and `#eeebe2` (light) when the user changes themes —
+// wiring is already in place. The only missing piece is that Claude Code
+// defaults to `theme: "dark"` when settings.json has no theme key, so users
+// don't get the auto-follow behavior unless they manually `/theme auto` once.
+//
+// We bridge that gap on every Claude Code launch: if `~/.claude/settings.json`
+// has no explicit `theme` key, we add `theme: "auto"`. Existing values are
+// always preserved — once a user runs `/theme dark` (or any other choice),
+// Claude Code writes that key and we never touch it again.
+fn ensure_claude_theme_auto() {
+    let Some(home) = dirs::home_dir() else {
+        return;
+    };
+    let dir = home.join(".claude");
+    let path = dir.join("settings.json");
+
+    // Don't auto-create the .claude/ directory — Claude Code itself creates
+    // it on first run with proper permissions / contents. We only edit if
+    // it's already there.
+    if !dir.is_dir() {
+        return;
+    }
+
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+
+    // Empty / missing file: write a minimal one.
+    if existing.trim().is_empty() {
+        let body = "{\n  \"theme\": \"auto\"\n}\n";
+        if let Err(e) = std::fs::write(&path, body) {
+            eprintln!("[Coffee] could not seed claude theme=auto: {}", e);
+        } else {
+            eprintln!("[Coffee] seeded ~/.claude/settings.json with theme=auto");
+        }
+        return;
+    }
+
+    // Non-empty: parse, only insert `theme` if absent. Anything else (invalid
+    // JSON, non-object root) we leave alone — never corrupt user config.
+    let mut value: serde_json::Value = match serde_json::from_str(&existing) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let serde_json::Value::Object(ref mut map) = value else {
+        return;
+    };
+    if map.contains_key("theme") {
+        return;
+    }
+    map.insert(
+        "theme".to_string(),
+        serde_json::Value::String("auto".to_string()),
+    );
+
+    match serde_json::to_string_pretty(&value) {
+        Ok(s) => {
+            if let Err(e) = std::fs::write(&path, format!("{}\n", s)) {
+                eprintln!("[Coffee] could not write claude theme=auto: {}", e);
+            } else {
+                eprintln!("[Coffee] added theme=auto to ~/.claude/settings.json");
+            }
+        }
+        Err(_) => {}
+    }
+}
+
+// ─── Public Types ─────────────────────────────────────────
+
+#[derive(Serialize, Clone)]
+pub struct TerminalOutput {
+    pub id: String,
+    pub data: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct TerminalStatus {
+    pub id: String,
+    pub running: bool,
+    pub exit_code: Option<i32>,
+}
+
+/// Fired when the spawned child process terminates (detected via child.wait()
+/// in a dedicated watcher thread). This is the explicit "process is dead"
+/// signal the frontend needs to render a recovery overlay, instead of the
+/// terminal looking frozen because the reader is still blocked waiting for
+/// bytes that will never come (Windows ConPTY / intermediate cmd.exe keeps
+/// the PTY slave open past the child's actual death).
+#[derive(Serialize, Clone)]
+pub struct TerminalExitEvent {
+    pub id: String,
+    pub exit_code: i32,
+}
+
+/// Agent working status emitted to the frontend every second
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct AgentStatusEvent {
+    pub id: String,
+    /// "working" | "idle" | "wait_input"
+    pub status: String,
+    /// Milliseconds since last PTY output
+    pub silence_ms: u64,
+    /// The specific AI tool backing this session
+    pub tool: Option<String>,
+}
+
+// ─── Agent Presets for Session Resume ─────────────────────
+
+pub struct AgentPreset {
+    pub tool_name: &'static str,
+    /// Program name for resume (e.g. "claude")
+    pub resume_program: Option<&'static str>,
+    /// Args inserted BEFORE the session token (e.g. &["--resume"])
+    pub resume_args_before: &'static [&'static str],
+    /// Args inserted AFTER the session token (e.g. &["--no-alt-screen"])
+    pub resume_args_after: &'static [&'static str],
+    /// Regex matched against PTY output to *capture* the session token.
+    pub session_id_pattern: Option<&'static str>,
+    /// Anchored regex that validates a standalone token string before use in
+    /// a resume command.  Prevents flag injection (e.g. "id --skip-permissions").
+    pub token_format: Option<&'static str>,
+    /// Characters that indicate the agent is waiting for user input
+    pub prompt_markers: &'static [&'static str],
+}
+
+pub const AGENT_PRESETS: &[AgentPreset] = &[
+    AgentPreset {
+        tool_name: "claude",
+        resume_program: Some("claude"),
+        resume_args_before: &["--resume"],
+        resume_args_after: &[],
+        session_id_pattern: Some(
+            r"Session ID:\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+        ),
+        token_format: Some(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+        prompt_markers: &["❯", "> "],
+    },
+    AgentPreset {
+        tool_name: "gemini",
+        resume_program: Some("gemini"),
+        resume_args_before: &["--resume"],
+        resume_args_after: &[],
+        session_id_pattern: Some(
+            r"Session ID:\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+        ),
+        token_format: Some(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+        prompt_markers: &["✦"],
+    },
+    AgentPreset {
+        tool_name: "hermes",
+        resume_program: Some("hermes"),
+        resume_args_before: &["--resume"],
+        resume_args_after: &[],
+        session_id_pattern: Some(r"(\d{8}_\d{6}_[0-9a-f]{6})"),
+        token_format: Some(r"^\d{8}_\d{6}_[0-9a-f]{6}$"),
+        prompt_markers: &["❯"],
+    },
+    // OpenCode 1.14+ resume: `opencode --session ses_<25-alnum>`. The TUI
+    // does not echo the session id to stdout (verified live on 1.14.32),
+    // so `session_id_pattern` is None — the resume token is sourced from
+    // the existing OpenCode history reader in server.rs (which parses
+    // `~/.local/share/opencode/storage/session/<projectID>/*.json`),
+    // not from PTY scraping. Prompt marker `┃` (U+2503 HEAVY VERTICAL)
+    // is the left border of OpenCode's input box, persistently rendered
+    // in idle state; combined with the >1.2s silence rule in the status
+    // ticker this reliably maps to "wait_input" only after the agent has
+    // finished streaming.
+    AgentPreset {
+        tool_name: "opencode",
+        resume_program: Some("opencode"),
+        resume_args_before: &["--session"],
+        resume_args_after: &[],
+        session_id_pattern: None,
+        token_format: Some(r"^ses_[A-Za-z0-9]{25}$"),
+        prompt_markers: &["┃"],
+    },
+    // Codex CLI resume: `codex resume <id>` is a positional subcommand,
+    // not a `--resume` flag. Token is the rollout filename stem (UUID).
+    AgentPreset {
+        tool_name: "codex",
+        resume_program: Some("codex"),
+        resume_args_before: &["resume"],
+        resume_args_after: &[],
+        session_id_pattern: None,
+        token_format: Some(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+        prompt_markers: &["▌"],
+    },
+    // Qwen Code is a Gemini-CLI fork — same `--resume <uuid>` flag and
+    // UUID token format inherited from upstream.
+    AgentPreset {
+        tool_name: "qwen",
+        resume_program: Some("qwen"),
+        resume_args_before: &["--resume"],
+        resume_args_after: &[],
+        session_id_pattern: None,
+        token_format: Some(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+        prompt_markers: &["✦"],
+    },
+    // OpenClaw resume: `openclaw resume <agentId>:<sessionId>` —
+    // composite token because openclaw indexes sessions per agent.
+    // Token format below intentionally matches both bare UUID and
+    // `<agentId>:<uuid>` shapes; the history reader writes the
+    // composite form, but a bare UUID still validates so users
+    // round-tripping through tool-config can copy the simpler value.
+    AgentPreset {
+        tool_name: "openclaw",
+        resume_program: Some("openclaw"),
+        resume_args_before: &["resume"],
+        resume_args_after: &[],
+        session_id_pattern: None,
+        token_format: Some(
+            r"^[A-Za-z0-9_\-]{1,64}(:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$",
+        ),
+        prompt_markers: &["❯"],
+    },
+];
+
+pub fn find_preset(tool_name: &str) -> Option<&'static AgentPreset> {
+    AGENT_PRESETS.iter().find(|p| p.tool_name == tool_name)
+}
+
+// ─── Shared Session State ─────────────────────────────────
+
+pub struct TerminalSession {
+    /// Cloneable Arc for write operations — lets callers release the session map
+    /// lock before doing PTY I/O, preventing multi-tab starvation.
+    pub writer_lock: Arc<Mutex<Box<dyn Write + Send>>>,
+    pub kill_tx: std::sync::mpsc::Sender<()>,
+    /// The tool name (e.g. "claude", "qwen") for this session
+    #[allow(dead_code)]
+    pub tool_name: Option<String>,
+    /// Captured session token for resume (e.g. Claude Session ID)
+    pub session_token: Mutex<Option<String>>,
+    /// Hold PTY master alive — dropping this kills the terminal pipe
+    pub(crate) _master: Arc<Mutex<Option<Box<dyn portable_pty::MasterPty + Send>>>>,
+    /// Shared activity state for status detection.
+    pub activity: Arc<Mutex<SessionActivity>>,
+    /// Whether Sentinel Protocol is enabled for this pane. When true, the
+    /// backend scans the pane's output for DONE markers and can wake peer
+    /// panes directly via PTY injection.
+    pub sentinel_enabled: bool,
+    /// Ring buffer of recent base64-encoded output chunks. Originally
+    /// populated for DetachedTerminal's history replay (retired 2026-04)
+    /// and the MCP `read_pane` tool (also archived). Currently referenced
+    /// only by the dormant `mcp_server` module; kept alive here so that
+    /// module still compiles and can be revived without re-plumbing.
+    pub output_buffer: Arc<Mutex<Vec<String>>>,
+    /// Cursor-addressable stripped-output chunks for incremental readers
+    /// such as MCP `read_pane_delta` / `expect_pane(cursor=...)`.
+    pub output_chunks: Arc<Mutex<VecDeque<OutputChunk>>>,
+    /// Monotonic chunk cursor. Incremented once per emitted stripped batch.
+    pub output_cursor: Arc<AtomicU64>,
+    /// Recently acknowledged DONE keys for sentinel dedupe. New protocol uses
+    /// `task=<uuid>`; legacy protocol falls back to the raw marker text.
+    pub sentinel_done_keys: Arc<Mutex<VecDeque<String>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OutputChunk {
+    pub cursor: u64,
+    pub text: String,
+}
+
+pub type SharedSession = Arc<Mutex<std::collections::HashMap<String, TerminalSession>>>;
+
+/// Per-session I/O tracking for status detection.
+/// Shared between the emitter thread, ticker thread, and the input handler
+/// so that user-submitted-Enter can immediately signal "working".
+///
+/// Liveness (`alive`) has been moved to a separate `Arc<AtomicBool>` so that
+/// the ticker hot-path checks it without acquiring this mutex — the previous
+/// design forced the 500 ms ticker to serialize with the per-read emitter
+/// lock, inflating status-change latency.
+pub struct SessionActivity {
+    pub last_output_at: Instant,
+    pub burst_start: Option<Instant>,
+    pub last_status: String,
+    /// Rolling buffer of recent stripped output for prompt marker detection
+    pub recent_text: String,
+    /// Tracks when user last pressed Enter → immediate "working" signal.
+    /// Cleared when a prompt marker is detected (agent finished & is idle).
+    pub user_submitted_at: Option<Instant>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SentinelDoneEvent {
+    pub tab_id: String,
+    pub emitter_session_id: String,
+    pub target_session_id: String,
+    pub emitter_pane_idx: u8,
+    pub target_pane_idx: u8,
+    pub notify_injected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_excerpt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SentinelResultEvent {
+    pub tab_id: String,
+    pub emitter_session_id: String,
+    pub target_session_id: String,
+    pub emitter_pane_idx: u8,
+    pub target_pane_idx: u8,
+    pub task_id: String,
+    pub result_excerpt: String,
+    pub control_channel: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SentinelDoneMarker {
+    raw: String,
+    task_id: Option<String>,
+    emitter_pane_idx: u8,
+    target_pane_idx: u8,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SentinelResultBlock {
+    pub task_id: String,
+    pub from_pane_idx: u8,
+    pub to_pane_idx: u8,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SentinelTaskRecord {
+    pub tab_id: String,
+    pub task_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_label: Option<String>,
+    pub emitter_session_id: String,
+    pub emitter_pane_id: String,
+    pub target_session_id: String,
+    pub target_pane_id: String,
+    pub dispatch_text: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control_channel: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_excerpt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notify_injected: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+fn epoch_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn sentinel_task_registry() -> &'static Mutex<HashMap<String, SentinelTaskRecord>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<String, SentinelTaskRecord>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn register_dispatched_task(record: SentinelTaskRecord) {
+    if let Ok(mut map) = sentinel_task_registry().lock() {
+        map.insert(record.task_id.clone(), record);
+    }
+}
+
+pub fn record_task_result(
+    tab_id: &str,
+    task_id: &str,
+    result_excerpt: &str,
+    control_channel: &str,
+) {
+    let Ok(mut map) = sentinel_task_registry().lock() else {
+        return;
+    };
+    let Some(record) = map.get_mut(task_id) else {
+        return;
+    };
+    if record.tab_id != tab_id {
+        return;
+    }
+    if record.status != "completed" && record.status != "wake_failed" {
+        record.status = "result".to_string();
+    }
+    record.control_channel = Some(control_channel.to_string());
+    record.result_excerpt = if result_excerpt.trim().is_empty() {
+        None
+    } else {
+        Some(result_excerpt.trim().to_string())
+    };
+    record.updated_at = epoch_seconds();
+}
+
+pub fn record_task_completion(
+    tab_id: &str,
+    task_id: &str,
+    notify_injected: bool,
+    reason: Option<&str>,
+    result_excerpt: Option<&str>,
+) {
+    let Ok(mut map) = sentinel_task_registry().lock() else {
+        return;
+    };
+    let Some(record) = map.get_mut(task_id) else {
+        return;
+    };
+    if record.tab_id != tab_id {
+        return;
+    }
+    record.status = if notify_injected {
+        "completed".to_string()
+    } else {
+        "wake_failed".to_string()
+    };
+    record.notify_injected = Some(notify_injected);
+    record.reason = reason
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string);
+    if let Some(result_excerpt) = result_excerpt.map(str::trim).filter(|s| !s.is_empty()) {
+        record.result_excerpt = Some(result_excerpt.to_string());
+    }
+    record.updated_at = epoch_seconds();
+}
+
+pub fn query_task_records(
+    tab_id: &str,
+    batch_id: Option<&str>,
+    task_ids: Option<&[String]>,
+    include_completed: bool,
+    limit: usize,
+) -> Vec<SentinelTaskRecord> {
+    let Ok(map) = sentinel_task_registry().lock() else {
+        return Vec::new();
+    };
+    let mut items: Vec<SentinelTaskRecord> = map
+        .values()
+        .filter(|record| record.tab_id == tab_id)
+        .filter(|record| {
+            if let Some(batch_id) = batch_id {
+                record.batch_id.as_deref() == Some(batch_id)
+            } else {
+                true
+            }
+        })
+        .filter(|record| {
+            if let Some(task_ids) = task_ids {
+                task_ids.iter().any(|task_id| task_id == &record.task_id)
+            } else {
+                true
+            }
+        })
+        .filter(|record| {
+            include_completed
+                || (record.status != "completed" && record.status != "wake_failed")
+        })
+        .cloned()
+        .collect();
+    items.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then_with(|| a.task_id.cmp(&b.task_id))
+    });
+    items.truncate(limit.max(1));
+    items
+}
+
+pub fn infer_pending_task_for_target(target_session_id: &str) -> Result<SentinelTaskRecord, String> {
+    let map = sentinel_task_registry()
+        .lock()
+        .map_err(|_| "task registry poisoned".to_string())?;
+    let mut items: Vec<SentinelTaskRecord> = map
+        .values()
+        .filter(|record| record.target_session_id == target_session_id)
+        .filter(|record| record.status != "completed" && record.status != "wake_failed")
+        .cloned()
+        .collect();
+    items.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then_with(|| a.task_id.cmp(&b.task_id))
+    });
+    match items.len() {
+        0 => Err(format!(
+            "no pending task context found for target session {}",
+            target_session_id
+        )),
+        1 => Ok(items.remove(0)),
+        _ => Err(format!(
+            "multiple pending tasks found for target session {}: {}",
+            target_session_id,
+            items
+                .iter()
+                .map(|record| record.task_id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+fn parse_multi_agent_session_id(session_id: &str) -> Option<(String, u8)> {
+    let (tab_id, pane_idx) = session_id.split_once("::pane-")?;
+    let pane_idx = pane_idx.parse::<u8>().ok()?;
+    Some((tab_id.to_string(), pane_idx))
+}
+
+/// Sentinel completion markers now prefer the structured form:
+///   - current / documented: `[COFFEE-DONE task=<id> from=pane-2 to=pane-1]`
+///   - legacy hyphenated:    `[COFFEE-DONE:pane-2->pane-1]`
+///   - legacy compact:       `[COFFEE-DONE:pane2->pane1]`
+///
+/// Accept all three so upgraded panes interoperate with legacy prompts and
+/// we can roll the protocol forward without breaking active sessions.
+fn sentinel_done_regex() -> regex::bytes::Regex {
+    regex::bytes::Regex::new(
+        r"\[COFFEE-DONE(?:\s+task=([A-Za-z0-9._:-]+)\s+from=pane-?(\d+)\s+to=pane-?(\d+)|:pane-?(\d+)->pane-?(\d+))\]",
+    )
+        .expect("DONE regex compiles")
+}
+
+fn terminal_ansi_regex() -> regex::Regex {
+    regex::Regex::new(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\].*?(?:\x07|\x1b\\)|\x1b.")
+        .expect("ANSI regex compiles")
+}
+
+fn strip_terminal_ansi(text: &str) -> String {
+    terminal_ansi_regex().replace_all(text, "").to_string()
+}
+
+fn strip_coffee_shell_task_lines(text: &str) -> String {
+    text.lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !trimmed.contains("__COFFEE_BEGIN_") && !trimmed.contains("__COFFEE_END_")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn parse_sentinel_done_caps(caps: &regex::bytes::Captures<'_>) -> Option<SentinelDoneMarker> {
+    let raw = String::from_utf8_lossy(caps.get(0)?.as_bytes()).to_string();
+    let task_id = caps
+        .get(1)
+        .map(|m| String::from_utf8_lossy(m.as_bytes()).to_string());
+
+    let (emitter_group, target_group) = if task_id.is_some() { (2, 3) } else { (4, 5) };
+    let emitter = std::str::from_utf8(caps.get(emitter_group)?.as_bytes())
+        .ok()
+        .and_then(|s| s.parse::<u8>().ok())?;
+    let target = std::str::from_utf8(caps.get(target_group)?.as_bytes())
+        .ok()
+        .and_then(|s| s.parse::<u8>().ok())?;
+
+    Some(SentinelDoneMarker {
+        raw,
+        task_id,
+        emitter_pane_idx: emitter,
+        target_pane_idx: target,
+    })
+}
+
+fn sentinel_done_dedupe_key(marker: &SentinelDoneMarker) -> String {
+    match &marker.task_id {
+        Some(task_id) => format!(
+            "task:{}:{}->{}",
+            task_id, marker.emitter_pane_idx, marker.target_pane_idx
+        ),
+        None => format!("legacy:{}", marker.raw),
+    }
+}
+
+fn mark_sentinel_done_seen(
+    session: &SharedSession,
+    emitter_session_id: &str,
+    marker: &SentinelDoneMarker,
+) -> Result<bool, String> {
+    let mut guard = session
+        .lock()
+        .map_err(|_| "session map poisoned".to_string())?;
+    let sess = guard
+        .get_mut(emitter_session_id)
+        .ok_or_else(|| format!("emitter session not found: {}", emitter_session_id))?;
+    let mut seen = sess
+        .sentinel_done_keys
+        .lock()
+        .map_err(|_| "sentinel done keys poisoned".to_string())?;
+    let key = sentinel_done_dedupe_key(marker);
+    if seen.iter().any(|existing| existing == &key) {
+        return Ok(false);
+    }
+    seen.push_back(key);
+    while seen.len() > 256 {
+        seen.pop_front();
+    }
+    Ok(true)
+}
+
+pub fn extract_latest_sentinel_result_block(
+    text: &str,
+    task_id: Option<&str>,
+) -> Option<SentinelResultBlock> {
+    let begin_re = regex::Regex::new(
+        r"\[COFFEE-RESULT-BEGIN\s+task=([A-Za-z0-9._:-]+)\s+from=pane-?(\d+)\s+to=pane-?(\d+)\]",
+    )
+    .expect("result-begin regex compiles");
+
+    let mut latest: Option<SentinelResultBlock> = None;
+    for caps in begin_re.captures_iter(text) {
+        let whole = match caps.get(0) {
+            Some(m) => m,
+            None => continue,
+        };
+        let candidate_task_id = match caps.get(1) {
+            Some(m) => m.as_str().to_string(),
+            None => continue,
+        };
+        if let Some(expected) = task_id {
+            if candidate_task_id != expected {
+                continue;
+            }
+        }
+        let from_pane_idx = match caps.get(2).and_then(|m| m.as_str().parse::<u8>().ok()) {
+            Some(v) => v,
+            None => continue,
+        };
+        let to_pane_idx = match caps.get(3).and_then(|m| m.as_str().parse::<u8>().ok()) {
+            Some(v) => v,
+            None => continue,
+        };
+
+        let end_marker = format!("[COFFEE-RESULT-END task={}]", candidate_task_id);
+        let rest = &text[whole.end()..];
+        let end_rel = match rest.find(&end_marker) {
+            Some(idx) => idx,
+            None => continue,
+        };
+        let body = rest[..end_rel].trim().to_string();
+        latest = Some(SentinelResultBlock {
+            task_id: candidate_task_id,
+            from_pane_idx,
+            to_pane_idx,
+            body,
+        });
+    }
+
+    latest
+}
+
+fn extract_result_excerpt_for_task(
+    session: &SharedSession,
+    emitter_session_id: &str,
+    task_id: Option<&str>,
+) -> Result<Option<SentinelResultBlock>, String> {
+    let raw_chunks: Vec<String> = {
+        let guard = session
+            .lock()
+            .map_err(|_| "session map poisoned".to_string())?;
+        let sess = guard
+            .get(emitter_session_id)
+            .ok_or_else(|| format!("emitter session not found: {}", emitter_session_id))?;
+        let ring = sess
+            .output_buffer
+            .lock()
+            .map_err(|_| "output buffer poisoned".to_string())?;
+        ring.clone()
+    };
+
+    let stripped = strip_terminal_ansi(&raw_chunks.join(""));
+    Ok(extract_latest_sentinel_result_block(&stripped, task_id))
+}
+
+fn write_and_submit_session_input(
+    session: &SharedSession,
+    target_session_id: &str,
+    text: &str,
+) -> Result<(), String> {
+    let body = text.trim_end_matches(['\r', '\n']).to_string();
+    let (writer_arc, activity_arc) = {
+        let guard = session
+            .lock()
+            .map_err(|_| "session map poisoned".to_string())?;
+        let sess = guard
+            .get(target_session_id)
+            .ok_or_else(|| format!("target session not found: {}", target_session_id))?;
+        (sess.writer_lock.clone(), sess.activity.clone())
+    };
+
+    if !body.is_empty() {
+        let mut writer = writer_arc
+            .lock()
+            .map_err(|_| "pane writer poisoned".to_string())?;
+        writer
+            .write_all(body.as_bytes())
+            .map_err(|e| format!("pty write failed: {}", e))?;
+        writer
+            .flush()
+            .map_err(|e| format!("pty flush failed: {}", e))?;
+    }
+
+    let body_len = body.chars().count() as u64;
+    let delay_ms = (250 + body_len).clamp(250, 1500);
+    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+
+    let cr_send_time = Instant::now();
+    {
+        let mut writer = writer_arc
+            .lock()
+            .map_err(|_| "pane writer poisoned".to_string())?;
+        writer
+            .write_all(b"\r")
+            .map_err(|e| format!("pty write failed: {}", e))?;
+        writer
+            .flush()
+            .map_err(|e| format!("pty flush failed: {}", e))?;
+    }
+    if let Ok(mut act) = activity_arc.lock() {
+        if act.last_status == "wait_input" {
+            act.user_submitted_at = Some(Instant::now());
+        }
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+
+    let cr_lost = activity_arc
+        .lock()
+        .map(|act| act.last_output_at < cr_send_time && act.last_status == "wait_input")
+        .unwrap_or(false);
+    if cr_lost {
+        log::warn!(
+            "[sentinel] CR appears absorbed by {}, retrying once",
+            target_session_id
+        );
+        let mut writer = writer_arc
+            .lock()
+            .map_err(|_| "pane writer poisoned".to_string())?;
+        writer
+            .write_all(b"\r")
+            .map_err(|e| format!("pty write failed: {}", e))?;
+        writer
+            .flush()
+            .map_err(|e| format!("pty flush failed: {}", e))?;
+    }
+
+    Ok(())
+}
+
+fn handle_sentinel_done(
+    app: &AppHandle,
+    session: &SharedSession,
+    emitter_session_id: &str,
+    tab_id: &str,
+    emitter_pane_idx: u8,
+    target_pane_idx: u8,
+    task_id: Option<String>,
+) {
+    let target_session_id = format!("{}::pane-{}", tab_id, target_pane_idx);
+    let result_block =
+        extract_result_excerpt_for_task(session, emitter_session_id, task_id.as_deref())
+            .ok()
+            .flatten();
+    if let (Some(task_id), Some(block)) = (task_id.as_ref(), result_block.as_ref()) {
+        record_task_result(tab_id, task_id, &block.body, "sentinel-control-v1");
+        let _ = app.emit(
+            "sentinel-result",
+            SentinelResultEvent {
+                tab_id: tab_id.to_string(),
+                emitter_session_id: emitter_session_id.to_string(),
+                target_session_id: target_session_id.clone(),
+                emitter_pane_idx,
+                target_pane_idx,
+                task_id: task_id.clone(),
+                result_excerpt: block.body.clone(),
+                control_channel: "sentinel-control-v1".to_string(),
+            },
+        );
+    }
+    let mut event = SentinelDoneEvent {
+        tab_id: tab_id.to_string(),
+        emitter_session_id: emitter_session_id.to_string(),
+        target_session_id: target_session_id.clone(),
+        emitter_pane_idx,
+        target_pane_idx,
+        notify_injected: false,
+        task_id: task_id.clone(),
+        result_excerpt: result_block.as_ref().map(|block| block.body.clone()),
+        reason: None,
+    };
+
+    let gate_reason = {
+        let guard = match session.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                event.reason = Some("session map poisoned".to_string());
+                let _ = app.emit("sentinel-done", event);
+                return;
+            }
+        };
+        match guard.get(&target_session_id) {
+            None => Some(format!("target session not active: {}", target_session_id)),
+            Some(target_sess) if !target_sess.sentinel_enabled => {
+                Some(format!("target sentinel disabled: {}", target_session_id))
+            }
+            Some(_) => None,
+        }
+    };
+
+    if let Some(reason) = gate_reason {
+        log::info!(
+            "[sentinel] gate rejected for pane-{} -> pane-{}: {}",
+            emitter_pane_idx,
+            target_pane_idx,
+            reason
+        );
+        event.reason = Some(reason);
+        let _ = app.emit("sentinel-done", event);
+        return;
+    }
+
+    let notify = match (task_id.as_deref(), result_block.as_ref()) {
+        (Some(task_id), Some(block)) if !block.body.is_empty() => format!(
+            "[From pane {}] Task complete. task_id={}\n\n[Worker Result]\n{}",
+            emitter_pane_idx, task_id, block.body
+        ),
+        (Some(task_id), _) => {
+            format!(
+                "[From pane {}] Task complete. task_id={}",
+                emitter_pane_idx, task_id
+            )
+        }
+        (None, Some(block)) if !block.body.is_empty() => format!(
+            "[From pane {}] Task complete.\n\n[Worker Result]\n{}",
+            emitter_pane_idx, block.body
+        ),
+        _ => format!("[From pane {}] Task complete.", emitter_pane_idx),
+    };
+    match write_and_submit_session_input(session, &target_session_id, &notify) {
+        Ok(()) => {
+            event.notify_injected = true;
+            log::info!(
+                "[sentinel] injected wake-up from pane-{} to pane-{}",
+                emitter_pane_idx,
+                target_pane_idx
+            );
+        }
+        Err(e) => {
+            log::warn!(
+                "[sentinel] inject failed from pane-{} to pane-{}: {}",
+                emitter_pane_idx,
+                target_pane_idx,
+                e
+            );
+            event.reason = Some(e);
+        }
+    }
+
+    if let Some(task_id) = event.task_id.as_deref() {
+        record_task_completion(
+            tab_id,
+            task_id,
+            event.notify_injected,
+            event.reason.as_deref(),
+            event.result_excerpt.as_deref(),
+        );
+    }
+
+    let _ = app.emit("sentinel-done", event);
+}
+
+pub fn complete_task_via_control(
+    app: &AppHandle,
+    session: &SharedSession,
+    emitter_session_id: &str,
+    target_session_id: &str,
+    task_id: &str,
+    result_excerpt: &str,
+) -> Result<(), String> {
+    let (tab_id, emitter_pane_idx) = parse_multi_agent_session_id(emitter_session_id)
+        .ok_or_else(|| format!("invalid emitter session id: {}", emitter_session_id))?;
+    let (_, target_pane_idx) = parse_multi_agent_session_id(target_session_id)
+        .ok_or_else(|| format!("invalid target session id: {}", target_session_id))?;
+
+    let trimmed_result = result_excerpt.trim().to_string();
+    let mut event = SentinelDoneEvent {
+        tab_id: tab_id.clone(),
+        emitter_session_id: emitter_session_id.to_string(),
+        target_session_id: target_session_id.to_string(),
+        emitter_pane_idx,
+        target_pane_idx,
+        notify_injected: false,
+        task_id: Some(task_id.to_string()),
+        result_excerpt: if trimmed_result.is_empty() {
+            None
+        } else {
+            Some(trimmed_result.clone())
+        },
+        reason: None,
+    };
+
+    let gate_reason = {
+        let guard = session
+            .lock()
+            .map_err(|_| "session map poisoned".to_string())?;
+        match guard.get(target_session_id) {
+            None => Some(format!("target session not active: {}", target_session_id)),
+            Some(target_sess) if !target_sess.sentinel_enabled => {
+                Some(format!("target sentinel disabled: {}", target_session_id))
+            }
+            Some(_) => None,
+        }
+    };
+
+    if let Some(reason) = gate_reason {
+        event.reason = Some(reason.clone());
+        let _ = app.emit("sentinel-done", event);
+        return Err(reason);
+    }
+
+    if !trimmed_result.is_empty() {
+        record_task_result(&tab_id, task_id, &trimmed_result, "mcp-complete-v1");
+        let _ = app.emit(
+            "sentinel-result",
+            SentinelResultEvent {
+                tab_id: tab_id.clone(),
+                emitter_session_id: emitter_session_id.to_string(),
+                target_session_id: target_session_id.to_string(),
+                emitter_pane_idx,
+                target_pane_idx,
+                task_id: task_id.to_string(),
+                result_excerpt: trimmed_result.clone(),
+                control_channel: "mcp-complete-v1".to_string(),
+            },
+        );
+    }
+
+    let notify = if trimmed_result.is_empty() {
+        format!(
+            "[From pane {}] Task complete. task_id={}",
+            emitter_pane_idx, task_id
+        )
+    } else {
+        format!(
+            "[From pane {}] Task complete. task_id={}\n\n[Worker Result]\n{}",
+            emitter_pane_idx, task_id, trimmed_result
+        )
+    };
+    match write_and_submit_session_input(session, target_session_id, &notify) {
+        Ok(()) => {
+            event.notify_injected = true;
+        }
+        Err(e) => {
+            event.reason = Some(e.clone());
+            let _ = app.emit("sentinel-done", event);
+            return Err(e);
+        }
+    }
+
+    record_task_completion(
+        &tab_id,
+        task_id,
+        event.notify_injected,
+        event.reason.as_deref(),
+        event.result_excerpt.as_deref(),
+    );
+
+    let _ = app.emit("sentinel-done", event);
+    Ok(())
+}
+
+// ─── Spawn ────────────────────────────────────────────────
+
+/// Spawns `program` with `args` inside a PTY via portable-pty.
+/// On Windows this uses ConPTY, on Unix it uses native PTYs.
+///
+/// `extra_env` is applied AFTER parent-env inheritance and the standard
+/// AI-CLI env hints (TERM/FORCE_COLOR/NODE_OPTIONS/…) so its entries win.
+/// Used for per-pane config injection where the env var must differ across
+/// concurrent panes (e.g. `OPENCODE_CONFIG` points at a per-pane JSON file).
+/// `std::env::set_var` would race across panes; this is the race-free path.
+pub fn spawn(
+    app: AppHandle,
+    session_id: String,
+    session: SharedSession,
+    program: String,
+    args: Vec<String>,
+    cwd: Option<String>,
+    _lang: String,
+    initial_cols: u16,
+    initial_rows: u16,
+    tool_name: Option<String>,
+    sentinel_enabled: bool,
+    theme_mode: Option<String>,
+    locale: Option<String>,
+    extra_env: Vec<(String, String)>,
+) -> anyhow::Result<()> {
+    use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+
+    // Default to at least 120 cols so wide terminal output (help screens,
+    // table output, etc.) doesn't wrap aggressively in small windows.
+    let cols = initial_cols.max(120);
+    let rows = initial_rows.max(24);
+    eprintln!("[Tier Terminal] Spawning '{}' args={:?}", program, args);
+    eprintln!("[Tier Terminal] Size: {}x{}", cols, rows);
+
+    // ── Build command ──────────────────────────────────────────────────────
+    // On Windows: npm-installed tools are .cmd scripts, not real .exe files.
+    // CreateProcessW cannot run .cmd → always go through cmd.exe /c.
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = CommandBuilder::new("cmd.exe");
+        c.arg("/c");
+        c.arg(&program);
+        for a in &args {
+            c.arg(a);
+        }
+        c
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let mut cmd = {
+        let resolved = resolve_program(&program);
+        let mut c = CommandBuilder::new(&resolved);
+        for a in &args {
+            c.arg(a);
+        }
+        c
+    };
+    // Inherit full parent environment
+    for (key, val) in std::env::vars() {
+        cmd.env(key, val);
+    }
+
+    // Terminal capability: all tools get xterm-256color for rich rendering.
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+
+    // ── AI CLI environment hints ───────────────────────────────────────────
+    // These fixes target pain points Claude / Qwen / OpenCode / Hermes hit
+    // when running as subprocesses: color stripped, Node heap too small, git
+    // waiting for credential input, Unicode corruption, Homebrew tools not
+    // in PATH, etc. Every env var is a no-op for tools that don't recognize
+    // it — maximum benefit, zero risk for those that do.
+    let is_ai_cli = matches!(
+        tool_name.as_deref(),
+        Some("claude")
+            | Some("qwen")
+            | Some("opencode")
+            | Some("hermes")
+            | Some("codex")
+            | Some("gemini")
+    );
+
+    if is_ai_cli {
+        // Claude Code only: seed `theme: "auto"` in ~/.claude/settings.json
+        // if no theme is set yet. xterm.js answers OSC 11 with our terminal
+        // background, and Claude Code's `auto` preset uses that to follow
+        // Coffee CLI's light/dark switch automatically. A no-op once the user
+        // has any `theme` value (including "auto" or a custom theme).
+        if matches!(tool_name.as_deref(), Some("claude")) {
+            ensure_claude_theme_auto();
+        }
+
+        // Cross-platform: most CLIs auto-disable ANSI color when they detect
+        // a subprocess / non-TTY context. Force color so Claude's status
+        // highlights, diff colors, error markers stay visible.
+        cmd.env("FORCE_COLOR", "1");
+
+        // Node-based agents (Claude Code, OpenCode CLI) default to ~1.7GB
+        // heap. Large monorepos trip this during big refactors / tree scans;
+        // 8GB is safe on any dev machine and ignored by non-Node tools.
+        cmd.env("NODE_OPTIONS", "--max-old-space-size=8192");
+
+        // Without this, `git push` / `git pull` / `git fetch` block waiting
+        // for interactive credential input if no credential helper is
+        // configured — PTY readers just see a silent hang. Fail loudly
+        // instead and let the user see the real error.
+        cmd.env("GIT_TERMINAL_PROMPT", "0");
+
+        // ── Windows-specific fixes ────────────────────────────────────────
+        #[cfg(target_os = "windows")]
+        {
+            // Git BASH SHELL hint — unlocks grep / sed / awk / find / ssh /
+            // POSIX pipes when Claude etc. shell out. Only set if the user
+            // hasn't defined SHELL themselves (respect explicit choice).
+            if std::env::var_os("SHELL").is_none() {
+                let candidates: [&str; 2] = [
+                    r"C:\Program Files\Git\bin\bash.exe",
+                    r"C:\Program Files (x86)\Git\bin\bash.exe",
+                ];
+                let found = candidates
+                    .iter()
+                    .find(|p| std::path::Path::new(p).exists())
+                    .map(|p| p.to_string())
+                    .or_else(|| {
+                        std::env::var("LOCALAPPDATA").ok().and_then(|la| {
+                            let p = format!(r"{}\Programs\Git\bin\bash.exe", la);
+                            std::path::Path::new(&p).exists().then_some(p)
+                        })
+                    });
+                if let Some(bash) = found {
+                    eprintln!("[Tier Terminal] SHELL={} (Git BASH for {})", bash, program);
+                    cmd.env("SHELL", &bash);
+                }
+            }
+
+            // Windows Python on CJK locales defaults I/O to cp936 / GBK,
+            // which corrupts UTF-8 files when Claude reads or writes them.
+            // Force utf-8 regardless of system locale.
+            cmd.env("PYTHONIOENCODING", "utf-8");
+
+            // Set POSIX locale vars if the user hasn't — keeps shell tools
+            // emitting UTF-8 output and avoids locale-specific sort orders.
+            if std::env::var_os("LANG").is_none() {
+                cmd.env("LANG", "en_US.UTF-8");
+            }
+            if std::env::var_os("LC_ALL").is_none() {
+                cmd.env("LC_ALL", "en_US.UTF-8");
+            }
+        }
+
+        // ── macOS-specific fixes ──────────────────────────────────────────
+        // Tauri launches subprocesses from a GUI context that doesn't source
+        // the user's interactive shell profile. If Claude / node / npm were
+        // installed via Homebrew and Homebrew's bin dir is only exported in
+        // ~/.zshrc, we won't find them. Prepend the common Homebrew bin
+        // paths that exist so the spawned shell can resolve these tools.
+        #[cfg(target_os = "macos")]
+        {
+            let brew_candidates = ["/opt/homebrew/bin", "/usr/local/bin"];
+            let mut prepend = Vec::new();
+            for p in brew_candidates {
+                if std::path::Path::new(p).is_dir() {
+                    prepend.push(p.to_string());
+                }
+            }
+            if !prepend.is_empty() {
+                let current = std::env::var("PATH").unwrap_or_default();
+                // Only add paths that aren't already present.
+                let existing: Vec<&str> = current.split(':').collect();
+                let needs_prepend: Vec<&String> = prepend
+                    .iter()
+                    .filter(|p| !existing.contains(&p.as_str()))
+                    .collect();
+                if !needs_prepend.is_empty() {
+                    let joined: Vec<String> = needs_prepend.iter().map(|s| (*s).clone()).collect();
+                    let new_path = format!("{}:{}", joined.join(":"), current);
+                    eprintln!(
+                        "[Tier Terminal] PATH prepended with Homebrew dirs for {}",
+                        program
+                    );
+                    cmd.env("PATH", new_path);
+                }
+            }
+        }
+    }
+
+    // Pass theme mode to Coffee Code so it knows dark vs light at startup
+    if let Some(ref mode) = theme_mode {
+        cmd.env("COFFEE_CODE_THEME_MODE", mode);
+    }
+
+    // Pass locale to tool for i18n
+    if let Some(ref loc) = locale {
+        cmd.env("COFFEE_CODE_LOCALE", loc);
+    }
+
+    // ── Hook status injection (Claude Code) ────────────────────────────────
+    // The Coffee CLI hook script (installed into ~/.claude/settings.local.json
+    // at startup) reads these env vars to identify which tab a hook fired from
+    // and where to forward the event. Claude is the only CLI we integrate.
+    if let Some(tname) = tool_name.as_deref() {
+        if tname == "claude" {
+            use tauri::Manager;
+            let port = app
+                .state::<crate::server::AppState>()
+                .hook_port
+                .load(std::sync::atomic::Ordering::SeqCst);
+            if port != 0 {
+                cmd.env("COFFEE_CLI_TAB_ID", &session_id);
+                cmd.env("COFFEE_CLI_HOOK_PORT", port.to_string());
+                cmd.env("COFFEE_CLI_TOOL", tname);
+            }
+        }
+    }
+
+    // ── Linux/macOS: Enable OSC 7 CWD reporting ────────────────────────────
+    // Unlike Windows PowerShell which natively emits OSC 7, bash/zsh on Linux
+    // do NOT send CWD change notifications by default. Without this, the left
+    // panel workspace tree cannot track directory changes after startup.
+    // We inject PROMPT_COMMAND (bash) to emit OSC 7 on every prompt cycle.
+    // Zsh uses precmd_functions instead, configured via ZDOTDIR or direct hook.
+    #[cfg(not(target_os = "windows"))]
+    {
+        // For bash: PROMPT_COMMAND runs before each prompt display
+        // Append (don't overwrite) to preserve user's existing PROMPT_COMMAND
+        let osc7_cmd = r#"printf "\033]7;file://%s%s\033\\" "$(hostname)" "$(pwd)""#;
+        let existing_prompt_cmd = std::env::var("PROMPT_COMMAND").unwrap_or_default();
+        let new_prompt_cmd = if existing_prompt_cmd.is_empty() {
+            osc7_cmd.to_string()
+        } else {
+            format!("{};{}", existing_prompt_cmd, osc7_cmd)
+        };
+        cmd.env("PROMPT_COMMAND", &new_prompt_cmd);
+    }
+
+    // Set working directory
+    if let Some(dir) = &cwd {
+        let path = std::path::Path::new(dir);
+        if path.exists() && path.is_dir() {
+            eprintln!("[Tier Terminal] CWD: {}", dir);
+            cmd.cwd(dir);
+            cmd.env("COFFEE_MODE_CWD", dir);
+        }
+    }
+
+    // ── Per-spawn env overrides ────────────────────────────────────────────
+    // Applied last so they win over inherited parent env, the AI-CLI hint
+    // block, theme/locale, and OSC 7 PROMPT_COMMAND. The race-free path for
+    // per-pane config when multiple panes spawn concurrently — each gets its
+    // own env block (e.g. OPENCODE_CONFIG=<unique-pane-temp-path>) without
+    // mutating Coffee CLI's own process-wide env.
+    for (k, v) in &extra_env {
+        cmd.env(k, v);
+    }
+
+    // ── Open PTY pair ──────────────────────────────────────────────────────
+    let pty_system = native_pty_system();
+    let pair = pty_system.openpty(PtySize {
+        rows,
+        cols,
+        pixel_width: 0,
+        pixel_height: 0,
+    })?;
+
+    // Spawn command into the PTY slave.
+    // `child` is owned by a dedicated watcher thread (see below) which blocks
+    // on child.wait() to detect process death — Coffee CLI's long-standing
+    // "terminal looks frozen after a while" bug was caused by not monitoring
+    // the child at all; if the child crashed but the PTY slave stayed open
+    // (via an intermediate cmd.exe on Windows, or grandchild process on any
+    // OS), reader.read() would block forever and the UI had no way to know.
+    let child = pair.slave.spawn_command(cmd)?;
+    eprintln!("[Tier Terminal] PTY process spawned OK (portable-pty)");
+
+    // Get reader/writer from the PTY master
+    let mut reader = pair.master.try_clone_reader()?;
+    let writer: Arc<Mutex<Box<dyn Write + Send>>> =
+        Arc::new(Mutex::new(pair.master.take_writer()?));
+
+    // Drop the slave side — only the master is needed from here
+    drop(pair.slave);
+
+    // ── CRITICAL: Keep master alive in Arc ─────────────────────────────────
+    // The master must stay alive as long as the session exists.
+    // If the master is dropped, the PTY pipe closes and the reader gets EOF.
+    // Previous bug: master was held in a wait thread that could drop it early
+    // when cmd.exe (the direct child) exits — even if the real tool (e.g. node.js)
+    // is still running as a grandchild process.
+    let master_arc: Arc<Mutex<Option<Box<dyn portable_pty::MasterPty + Send>>>> =
+        Arc::new(Mutex::new(Some(pair.master)));
+
+    let (kill_tx, kill_rx) = std::sync::mpsc::channel::<()>();
+
+    // ── Kill thread: drop PTY master on signal → reader gets EOF → cleanup runs
+    let master_for_kill = master_arc.clone();
+    std::thread::spawn(move || {
+        let _ = kill_rx.recv(); // block until kill_tx.send(()) or sender dropped
+        if let Ok(mut guard) = master_for_kill.lock() {
+            *guard = None; // drop PTY master → pipe closes
+        }
+    });
+
+    // ── Child exit watcher ─────────────────────────────────────────────────
+    // Coffee CLI's primary "terminal locks up after a while" failure mode:
+    // the child process (claude / node.js / etc.) dies, but an intermediate
+    // cmd.exe parent or grandchild process keeps the PTY slave open, so the
+    // reader thread never sees EOF — it blocks on read() forever and the
+    // frontend sees a frozen terminal with no explanation.
+    //
+    // Fix: own the Child handle in a dedicated thread that blocks on
+    // child.wait(). When wait() returns, we KNOW the process is dead.
+    // Actions on exit:
+    //   1. Emit "tier-terminal-exit" with the real exit code — the frontend
+    //      shows a "process exited — click to restart" overlay instead of a
+    //      frozen-looking terminal.
+    //   2. Force-drop the PTY master → reader thread gets EOF → normal
+    //      cleanup path runs (ticker stops, session removed from map,
+    //      tier-terminal-status fires).
+    //
+    // This is the SOLE new lifecycle signal; the existing reader-EOF cleanup
+    // path remains the one place that removes the session from the map.
+    let master_for_watcher = master_arc.clone();
+    let app_for_watcher = app.clone();
+    let sid_for_watcher = session_id.clone();
+    std::thread::spawn(move || {
+        let mut child = child;
+        let exit_code = match child.wait() {
+            Ok(status) => {
+                let code = status.exit_code() as i32;
+                eprintln!("[Tier Terminal] Child exited with code {}", code);
+                code
+            }
+            Err(e) => {
+                eprintln!("[Tier Terminal] child.wait() failed: {}", e);
+                -1
+            }
+        };
+        let _ = app_for_watcher.emit(
+            "tier-terminal-exit",
+            TerminalExitEvent {
+                id: sid_for_watcher.clone(),
+                exit_code,
+            },
+        );
+        // Force PTY master drop → reader thread gets EOF → cleanup path runs.
+        // Safe even if already dropped by the kill thread (guard just goes
+        // from None to None).
+        if let Ok(mut guard) = master_for_watcher.lock() {
+            *guard = None;
+        }
+    });
+
+    // Shared activity state for status detection across threads
+    // Initialize last_output_at in the past so the first ticker check doesn't
+    // falsely report "working" (silence_ms starts > 800ms).
+    let activity = Arc::new(Mutex::new(SessionActivity {
+        last_output_at: Instant::now() - std::time::Duration::from_secs(2),
+        burst_start: None,
+        last_status: "wait_input".to_string(),
+        recent_text: String::new(),
+        user_submitted_at: None,
+    }));
+
+    // Liveness flag — lives outside the activity mutex so the ticker can check
+    // it on every 500 ms tick without contending with the high-frequency
+    // emitter lock. Set to false exactly once, from the emitter cleanup path.
+    let alive_flag: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
+
+    // Store session (with shared writer reference + master kept alive + activity)
+    let output_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let output_chunks: Arc<Mutex<VecDeque<OutputChunk>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let output_cursor: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+    let sentinel_done_keys: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
+    {
+        let writer_clone = writer.clone();
+        let master_clone = master_arc.clone();
+        let activity_clone = activity.clone();
+        let buffer_clone = output_buffer.clone();
+        let chunks_clone = output_chunks.clone();
+        let cursor_clone = output_cursor.clone();
+        let done_keys_clone = sentinel_done_keys.clone();
+        let mut map = session.lock().unwrap();
+        map.insert(
+            session_id.clone(),
+            TerminalSession {
+                writer_lock: writer_clone,
+                kill_tx,
+                tool_name: tool_name.clone(),
+                session_token: Mutex::new(None),
+                _master: master_clone,
+                activity: activity_clone,
+                sentinel_enabled,
+                output_buffer: buffer_clone,
+                output_chunks: chunks_clone,
+                output_cursor: cursor_clone,
+                sentinel_done_keys: done_keys_clone,
+            },
+        );
+    }
+
+    // Build session ID regex if this tool supports resume
+    let session_id_regex = tool_name
+        .as_deref()
+        .and_then(find_preset)
+        .and_then(|p| p.session_id_pattern)
+        .and_then(|pat| regex::Regex::new(pat).ok());
+
+    // Get prompt markers for wait_input detection
+    let prompt_markers: Vec<String> = tool_name
+        .as_deref()
+        .and_then(find_preset)
+        .map(|p| p.prompt_markers.iter().map(|s| s.to_string()).collect())
+        .unwrap_or_default();
+
+    // ── Handles shared with the emitter thread (below) ───────────────────────
+    // The emitter is the sole lifecycle manager now; these clones are consumed
+    // by its `move` closure.
+    let session_for_token = session.clone();
+    let session_for_cleanup = session.clone();
+    let sid_cleanup = session_id.clone();
+
+    // ── Agent Status Ticker Thread ───────────────────────────────────────────
+    // Dual-signal detection: combines PTY output timing with user-input tracking.
+    // When user presses Enter (detected by tier_terminal_input), we immediately
+    // know the agent is "working" — no need to wait for PTY output to start.
+    // This eliminates the "thinking gap" where silence was misclassified as idle.
+    let activity_for_ticker = activity.clone();
+    let alive_for_ticker = alive_flag.clone();
+    let app_for_ticker = app.clone();
+    let sid_for_ticker = session_id.clone();
+    let markers_for_ticker = prompt_markers.clone();
+    let tool_name_for_ticker = tool_name.clone();
+
+    std::thread::spawn(move || {
+        loop {
+            // 500ms when foreground, 5s when window is hidden — agent status
+            // updates can lag a few seconds when the user isn't looking.
+            let interval_ms = if BACKGROUND_MODE.load(Ordering::Relaxed) {
+                5000
+            } else {
+                500
+            };
+            std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+            // Cheap atomic check — no mutex contention with the emitter.
+            if !alive_for_ticker.load(Ordering::Relaxed) {
+                break;
+            }
+            let mut act = match activity_for_ticker.lock() {
+                Ok(a) => a,
+                Err(_) => break,
+            };
+
+            let now = Instant::now();
+            let silence_ms = now.duration_since(act.last_output_at).as_millis() as u64;
+
+            // Check prompt markers in the recent output buffer.
+            // Use a safe char-boundary check to avoid panicking on multi-byte
+            // UTF-8 characters (e.g. '─' is 3 bytes, '❯' is 3 bytes).
+            let tail = if act.recent_text.len() > 150 {
+                let start = act.recent_text.len() - 150;
+                // Walk forward to find a valid UTF-8 char boundary
+                let safe_start = (start..act.recent_text.len())
+                    .find(|&i| act.recent_text.is_char_boundary(i))
+                    .unwrap_or(act.recent_text.len());
+                &act.recent_text[safe_start..]
+            } else {
+                &act.recent_text
+            };
+
+            let is_at_prompt = markers_for_ticker.iter().any(|m| {
+                tail.contains(m.as_str()) || act.recent_text.trim_end().ends_with(m.as_str())
+            });
+
+            // ── 2-State Agent Status Detection ──────────────────────────
+            //
+            // Two states: "working" and "wait_input".
+            // "working" = agent is processing the user's request.
+            // "wait_input" = agent is at its prompt, waiting for input.
+            //
+            // Detection rules:
+            //
+            // 1. WAIT_INPUT: Prompt marker detected + silence > 1200ms
+            //    → Agent finished responding and shows its prompt.
+            //    → Clear user_submitted_at (request cycle complete).
+            //
+            // 2. WORKING: User submitted (pressed Enter at prompt) AND
+            //    no prompt marker has appeared since.
+            //    → This covers: thinking silence, streaming output, tool use.
+            //    → Also covers output flowing (silence < 800ms) after submission.
+            //    → 120s timeout as safety net for stuck sessions.
+            //
+            // 3. WAIT_INPUT (default): No user submission pending.
+            //    → Agent startup output, initialization, idle = all "wait_input".
+            //    → Output flowing without prior user input is just agent booting.
+
+            let user_submitted_recently = act
+                .user_submitted_at
+                .map(|t| now.duration_since(t).as_secs() < 120)
+                .unwrap_or(false);
+
+            let new_status = if is_at_prompt && silence_ms > 1200 {
+                // Agent is at the prompt — request cycle complete
+                act.user_submitted_at = None;
+                "wait_input".to_string()
+            } else if user_submitted_recently {
+                // User submitted a prompt and agent hasn't returned to prompt yet
+                "working".to_string()
+            } else {
+                // No pending submission — agent is at prompt or booting up
+                "wait_input".to_string()
+            };
+
+            if new_status != act.last_status {
+                act.last_status = new_status.clone();
+                let _ = app_for_ticker.emit(
+                    "agent-status",
+                    AgentStatusEvent {
+                        id: sid_for_ticker.clone(),
+                        status: new_status,
+                        silence_ms,
+                        tool: tool_name_for_ticker.clone(),
+                    },
+                );
+            }
+        }
+    });
+
+    // ── PTY reader + emitter (zellij-inspired split) ─────────────────────────
+    //
+    // Why split what used to be a single thread:
+    //
+    // The former design read 4 KB at a time, then on the same thread did ANSI
+    // strip + activity mutex + ring-buffer push + synchronous `app.emit()`
+    // before looping back to `reader.read()`. When the frontend stalled (slow
+    // xterm.js write, WebView IPC backlog), emit latency reflected directly
+    // into the PTY read cadence — the child process's write-end of the PTY
+    // would fill, blocking it in its own `write()` syscall. That is the
+    // structural cause of "root cause #2" (emit/channel backpressure) logged
+    // in CLAUDE memory.
+    //
+    // Zellij's `terminal_bytes.rs` decouples read from render via an async
+    // channel and explicitly comments on coalescing render under back-pressure.
+    // We mirror the idea with two std threads and a coalescing window:
+    //
+    //   Reader   : reads up to 64 KB (matches zellij) → mpsc::send(Vec<u8>).
+    //              Zero mutexes on the hot loop. EOF/error drops tx, which
+    //              signals the emitter to drain + clean up.
+    //
+    //   Emitter  : pulls from the channel, accumulates up to an ~8 ms window
+    //              (imperceptible to users, collapses AI-CLI token bursts),
+    //              then runs ANSI strip + activity update + OSC 7 detect +
+    //              session-token capture + IPC emit + ring-buffer push
+    //              ONCE per window. Single lock per batch, single IPC per
+    //              batch.
+    //
+    // Cleanup (ticker stop + status emit + session map removal) is the
+    // emitter's responsibility, so the order is deterministic: final flush
+    // → alive flag off → idle status → map remove → final status event.
+
+    let (bytes_tx, bytes_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+
+    // ── Reader thread ───────────────────────────────────────────────────────
+    let reader_log_id = session_id.clone();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 65536]; // 64 KB — matches zellij; 16× the former 4 KB.
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => {
+                    eprintln!("[Tier Terminal] PTY reader: EOF ({})", reader_log_id);
+                    break;
+                }
+                Ok(n) => {
+                    // Forward raw bytes only — all processing lives in the emitter.
+                    if bytes_tx.send(buf[..n].to_vec()).is_err() {
+                        // Emitter has already exited; nothing left to do.
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let msg = format!("{}", e);
+                    if !msg.contains("BrokenPipe")
+                        && !msg.contains("broken pipe")
+                        && !msg.contains("管道")
+                    {
+                        eprintln!("[Tier Terminal] PTY reader error: {}", e);
+                    }
+                    break;
+                }
+            }
+        }
+        // Dropping bytes_tx here signals the emitter's recv loop to drain and
+        // then transition to cleanup.
+    });
+
+    // ── Emitter thread ──────────────────────────────────────────────────────
+    let alive_for_emitter = alive_flag.clone();
+    let app_out = app.clone();
+    let session_id_out = session_id.clone();
+    let activity_for_emitter = activity.clone();
+    let output_buffer_for_emitter = output_buffer.clone();
+    let output_chunks_for_emitter = output_chunks.clone();
+    let output_cursor_for_emitter = output_cursor.clone();
+    let session_for_sentinel = session.clone();
+    let sentinel_enabled_for_session = sentinel_enabled;
+
+    std::thread::spawn(move || {
+        use std::sync::mpsc::RecvTimeoutError;
+        use std::time::Duration as StdDuration;
+
+        // 8 ms is below human-perceptible latency (~16 ms frame) but large
+        // enough to collapse a typical AI-CLI token-stream burst (hundreds of
+        // small writes) into a single emit. When the window is hidden, widen
+        // to 200 ms so a backgrounded Coffee CLI window stops generating
+        // 125 IPC events / sec / session for output the user can't see.
+        const FLUSH_INTERVAL_FG: StdDuration = StdDuration::from_millis(8);
+        const FLUSH_INTERVAL_BG: StdDuration = StdDuration::from_millis(200);
+        let flush_interval = || {
+            if BACKGROUND_MODE.load(Ordering::Relaxed) {
+                FLUSH_INTERVAL_BG
+            } else {
+                FLUSH_INTERVAL_FG
+            }
+        };
+        // Hard ceiling on the accumulation buffer so that a wedged frontend
+        // cannot drive unbounded memory growth in this thread.
+        const MAX_PENDING: usize = 1024 * 1024; // 1 MB
+
+        #[derive(Serialize, Clone)]
+        struct CwdPayload {
+            id: String,
+            cwd: String,
+        }
+
+        let ansi_re =
+            regex::Regex::new(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\].*?(?:\x07|\x1b\\)|\x1b.").unwrap();
+        let done_re = sentinel_done_regex();
+
+        let mut pending: Vec<u8> = Vec::with_capacity(131072);
+        let mut token_captured = false;
+        let mut last_flush = Instant::now();
+        let mut marker_scan_buf: Vec<u8> = Vec::with_capacity(8192);
+        let mut marker_scan_offset: usize = 0;
+
+        loop {
+            let interval = flush_interval();
+            let wait = interval
+                .checked_sub(last_flush.elapsed())
+                .unwrap_or(StdDuration::ZERO);
+
+            let recv_result = bytes_rx.recv_timeout(wait);
+            let disconnected = matches!(recv_result, Err(RecvTimeoutError::Disconnected));
+
+            if let Ok(chunk) = recv_result {
+                pending.extend_from_slice(&chunk);
+            }
+
+            // Idle reset: with pending empty, last_flush never advances, so
+            // wait decays to 0 and recv_timeout(0) becomes a non-blocking
+            // try_recv — pinning a CPU core per tab. Reset the clock here so
+            // the next recv_timeout blocks for a full interval.
+            if pending.is_empty() {
+                last_flush = Instant::now();
+            }
+
+            let should_flush = !pending.is_empty()
+                && (disconnected
+                    || pending.len() >= MAX_PENDING
+                    || last_flush.elapsed() >= interval);
+
+            if should_flush {
+                // PTY reads don't respect UTF-8 char boundaries: a 3-byte
+                // CJK char ('中' E4 B8 AD), a 3-byte box-draw char ('─' E2 94 80),
+                // or a 4-byte emoji can be split across two read() calls. If
+                // the flush boundary lands inside a multi-byte sequence,
+                // from_utf8_lossy turns the trailing fragment into U+FFFD (�)
+                // and pending.clear() then drops the bytes the next chunk's
+                // continuation needs — both halves render as 乱码.
+                //
+                // Fix: emit only bytes through the last *complete* UTF-8 char;
+                // carry any incomplete trailing sequence forward to the next
+                // flush. Genuine mid-buffer invalid bytes (error_len = Some)
+                // still fall through to lossy conversion as before.
+                let valid_end = match std::str::from_utf8(&pending) {
+                    Ok(_) => pending.len(),
+                    Err(e) => match e.error_len() {
+                        // Incomplete trailing sequence — defer the tail.
+                        None => e.valid_up_to(),
+                        // Genuine garbage mid-stream — let lossy handle it.
+                        Some(_) => pending.len(),
+                    },
+                };
+
+                // OSC 7 runs on raw bytes before UTF-8 lossy conversion.
+                // Use the validated prefix only — OSC sequences are ASCII so
+                // they can never legitimately span past valid_end.
+                let cwd_change = extract_osc7_cwd(&pending[..valid_end]);
+
+                let data = String::from_utf8_lossy(&pending[..valid_end]).to_string();
+                let stripped = ansi_re.replace_all(&data, "").to_string();
+                let visible = strip_coffee_shell_task_lines(&stripped);
+
+                // One activity-mutex acquisition per batch (not per read).
+                if !visible.is_empty() {
+                    let now = Instant::now();
+                    if let Ok(mut act) = activity_for_emitter.lock() {
+                        let silence = now.duration_since(act.last_output_at).as_millis() as u64;
+                        if silence > 2000 {
+                            act.burst_start = Some(now);
+                        }
+                        act.last_output_at = now;
+
+                        act.recent_text.push_str(&visible);
+                        let char_count = act.recent_text.chars().count();
+                        if char_count > 200 {
+                            if let Some((start_idx, _)) =
+                                act.recent_text.char_indices().nth(char_count - 200)
+                            {
+                                act.recent_text = act.recent_text[start_idx..].to_string();
+                            }
+                        }
+                    }
+                }
+
+                if sentinel_enabled_for_session {
+                    if let Some((tab_id, current_pane_idx)) =
+                        parse_multi_agent_session_id(&session_id_out)
+                    {
+                        marker_scan_buf.extend_from_slice(stripped.as_bytes());
+                        const MAX_MARKER_BUF: usize = 8192;
+                        if marker_scan_buf.len() > MAX_MARKER_BUF {
+                            let to_trim = marker_scan_buf.len() - MAX_MARKER_BUF;
+                            marker_scan_buf.drain(..to_trim);
+                            marker_scan_offset = marker_scan_offset.saturating_sub(to_trim);
+                        }
+
+                        if marker_scan_buf[marker_scan_offset..]
+                            .windows(b"[COFFEE-DONE".len())
+                            .any(|w| w == b"[COFFEE-DONE")
+                        {
+                            let unscanned = &marker_scan_buf[marker_scan_offset..];
+                            let mut advanced_to = 0usize;
+                            for caps in done_re.captures_iter(unscanned) {
+                                let Some(full_match) = caps.get(0) else {
+                                    continue;
+                                };
+                                advanced_to = advanced_to.max(full_match.end());
+
+                                let Some(marker) = parse_sentinel_done_caps(&caps) else {
+                                    log::warn!("[sentinel] could not parse DONE marker bytes");
+                                    continue;
+                                };
+                                let emitter = marker.emitter_pane_idx;
+                                let target = marker.target_pane_idx;
+
+                                log::info!(
+                                    "[sentinel] detected DONE marker in {}: pane-{} -> pane-{} task_id={}",
+                                    session_id_out,
+                                    emitter,
+                                    target,
+                                    marker.task_id.as_deref().unwrap_or("(legacy)")
+                                );
+
+                                if emitter != current_pane_idx {
+                                    let reason = format!(
+                                        "marker emitter pane-{} does not match current pane-{}",
+                                        emitter, current_pane_idx
+                                    );
+                                    log::info!(
+                                        "[sentinel] gate rejected in {}: {}",
+                                        session_id_out,
+                                        reason
+                                    );
+                                    let _ = app_out.emit(
+                                        "sentinel-done",
+                                        SentinelDoneEvent {
+                                            tab_id: tab_id.clone(),
+                                            emitter_session_id: session_id_out.clone(),
+                                            target_session_id: format!(
+                                                "{}::pane-{}",
+                                                tab_id, target
+                                            ),
+                                            emitter_pane_idx: emitter,
+                                            target_pane_idx: target,
+                                            notify_injected: false,
+                                            task_id: marker.task_id.clone(),
+                                            result_excerpt: None,
+                                            reason: Some(reason),
+                                        },
+                                    );
+                                    continue;
+                                }
+
+                                if target == emitter {
+                                    let reason = "self-targeted DONE marker".to_string();
+                                    log::info!(
+                                        "[sentinel] gate rejected in {}: {}",
+                                        session_id_out,
+                                        reason
+                                    );
+                                    let _ = app_out.emit(
+                                        "sentinel-done",
+                                        SentinelDoneEvent {
+                                            tab_id: tab_id.clone(),
+                                            emitter_session_id: session_id_out.clone(),
+                                            target_session_id: format!(
+                                                "{}::pane-{}",
+                                                tab_id, target
+                                            ),
+                                            emitter_pane_idx: emitter,
+                                            target_pane_idx: target,
+                                            notify_injected: false,
+                                            task_id: marker.task_id.clone(),
+                                            result_excerpt: None,
+                                            reason: Some(reason),
+                                        },
+                                    );
+                                    continue;
+                                }
+
+                                match mark_sentinel_done_seen(
+                                    &session_for_sentinel,
+                                    &session_id_out,
+                                    &marker,
+                                ) {
+                                    Ok(false) => {
+                                        let reason = format!(
+                                            "duplicate DONE ignored: {}",
+                                            sentinel_done_dedupe_key(&marker)
+                                        );
+                                        log::info!(
+                                            "[sentinel] gate rejected in {}: {}",
+                                            session_id_out,
+                                            reason
+                                        );
+                                        let _ = app_out.emit(
+                                            "sentinel-done",
+                                            SentinelDoneEvent {
+                                                tab_id: tab_id.clone(),
+                                                emitter_session_id: session_id_out.clone(),
+                                                target_session_id: format!(
+                                                    "{}::pane-{}",
+                                                    tab_id, target
+                                                ),
+                                                emitter_pane_idx: emitter,
+                                                target_pane_idx: target,
+                                                notify_injected: false,
+                                                task_id: marker.task_id.clone(),
+                                                result_excerpt: None,
+                                                reason: Some(reason),
+                                            },
+                                        );
+                                        continue;
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "[sentinel] done-dedupe failed in {}: {}",
+                                            session_id_out,
+                                            e
+                                        );
+                                    }
+                                    Ok(true) => {}
+                                }
+
+                                let session_for_job = session_for_sentinel.clone();
+                                let app_for_job = app_out.clone();
+                                let emitter_session_id = session_id_out.clone();
+                                let tab_id_for_job = tab_id.clone();
+                                let task_id_for_job = marker.task_id.clone();
+                                std::thread::spawn(move || {
+                                    handle_sentinel_done(
+                                        &app_for_job,
+                                        &session_for_job,
+                                        &emitter_session_id,
+                                        &tab_id_for_job,
+                                        emitter,
+                                        target,
+                                        task_id_for_job,
+                                    );
+                                });
+                            }
+
+                            if advanced_to > 0 {
+                                marker_scan_offset += advanced_to;
+                            }
+                        }
+                    }
+                }
+
+                // Session token capture (once per session, for `--resume`).
+                if !token_captured {
+                    if let Some(ref re) = session_id_regex {
+                        if let Some(caps) = re.captures(&stripped) {
+                            if let Some(token) = caps.get(1) {
+                                let token_str = token.as_str().to_string();
+                                eprintln!(
+                                    "[Tier Terminal] Captured session token: {}...",
+                                    &token_str[..token_str.len().min(12)]
+                                );
+                                if let Ok(map) = session_for_token.lock() {
+                                    if let Some(sess) = map.get(&session_id_out) {
+                                        if let Ok(mut t) = sess.session_token.lock() {
+                                            *t = Some(token_str);
+                                        }
+                                    }
+                                }
+                                token_captured = true;
+                            }
+                        }
+                    }
+                }
+
+                // Single coalesced IPC emit — replaces what used to be
+                // N × small emits per burst.
+                let _ = app_out.emit(
+                    "tier-terminal-output",
+                    TerminalOutput {
+                        id: session_id_out.clone(),
+                        data: data.clone(),
+                    },
+                );
+
+                // One entry per batch in the detached-window history ring.
+                if let Ok(mut ring) = output_buffer_for_emitter.lock() {
+                    ring.push(data.clone());
+                    if ring.len() > 2000 {
+                        let drain = ring.len() - 2000;
+                        ring.drain(..drain);
+                    }
+                }
+
+                if !data.is_empty() {
+                    let cursor = output_cursor_for_emitter.fetch_add(1, Ordering::Relaxed) + 1;
+                    if let Ok(mut chunks) = output_chunks_for_emitter.lock() {
+                        chunks.push_back(OutputChunk {
+                            cursor,
+                            text: data.clone(),
+                        });
+                        while chunks.len() > 2000 {
+                            chunks.pop_front();
+                        }
+                    }
+                }
+
+                if let Some(new_cwd) = cwd_change {
+                    eprintln!("[Tier Terminal] CWD changed: {}", new_cwd);
+                    let _ = app_out.emit(
+                        "tier-terminal-cwd",
+                        CwdPayload {
+                            id: session_id_out.clone(),
+                            cwd: new_cwd,
+                        },
+                    );
+                }
+
+                // Drain only what we emitted; preserve any deferred trailing
+                // bytes for the next flush so split multi-byte chars resolve
+                // correctly when the rest arrives.
+                pending.drain(..valid_end);
+                last_flush = Instant::now();
+            }
+
+            if disconnected {
+                break;
+            }
+        }
+
+        // ── Cleanup (single authoritative path) ─────────────────────────────
+        eprintln!(
+            "[Tier Terminal] Emitter: cleaning up session {}",
+            session_id_out
+        );
+
+        // Signal ticker to exit on its next iteration.
+        alive_for_emitter.store(false, Ordering::Relaxed);
+
+        let _ = app_out.emit(
+            "agent-status",
+            AgentStatusEvent {
+                id: session_id_out.clone(),
+                status: "idle".to_string(),
+                silence_ms: 0,
+                tool: None,
+            },
+        );
+
+        // Drop the master Arc ref by removing the session from the map.
+        {
+            let mut map = session_for_cleanup.lock().unwrap();
+            map.remove(&sid_cleanup);
+        }
+
+        let _ = app_out.emit(
+            "tier-terminal-status",
+            TerminalStatus {
+                id: session_id_out,
+                running: false,
+                exit_code: Some(0),
+            },
+        );
+    });
+
+    Ok(())
+}
+
+// ─── Path resolution (Unix only) ─────────────────────────────────────────────
+
+/// Resolve a program name to a full path.
+#[cfg(not(target_os = "windows"))]
+fn resolve_program(name: &str) -> String {
+    if let Ok(output) = std::process::Command::new("which").arg(name).output() {
+        if output.status.success() {
+            let resolved = String::from_utf8_lossy(&output.stdout);
+            if let Some(first_line) = resolved.lines().next() {
+                let p = first_line.trim();
+                if !p.is_empty() {
+                    return p.to_string();
+                }
+            }
+        }
+    }
+    name.to_string()
+}
+
+// ─── Unit Tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── extract_osc7_cwd ──────────────────────────────────────────────────────
+
+    /// Helper: wrap a path string in OSC 7 with BEL terminator
+    fn osc7_bel(host: &str, path: &str) -> Vec<u8> {
+        format!("\x1b]7;file://{}{}\x07", host, path).into_bytes()
+    }
+
+    /// Helper: wrap a path string in OSC 7 with ST (ESC \) terminator
+    fn osc7_st(host: &str, path: &str) -> Vec<u8> {
+        format!("\x1b]7;file://{}{}\x1b\\", host, path).into_bytes()
+    }
+
+    #[test]
+    fn osc7_basic_with_hostname() {
+        let data = osc7_bel("myhost", "/home/user/projects");
+        assert_eq!(
+            extract_osc7_cwd(&data),
+            Some("/home/user/projects".to_string())
+        );
+    }
+
+    #[test]
+    fn osc7_no_hostname() {
+        // file:///path — hostname omitted, first `/` is the path start
+        let data = osc7_bel("", "/tmp/workspace");
+        assert_eq!(extract_osc7_cwd(&data), Some("/tmp/workspace".to_string()));
+    }
+
+    #[test]
+    fn osc7_st_terminator() {
+        let data = osc7_st("host", "/var/log");
+        assert_eq!(extract_osc7_cwd(&data), Some("/var/log".to_string()));
+    }
+
+    #[test]
+    fn osc7_percent_encoded_space() {
+        let data = osc7_bel("host", "/home/user/my%20project");
+        assert_eq!(
+            extract_osc7_cwd(&data),
+            Some("/home/user/my project".to_string())
+        );
+    }
+
+    #[test]
+    fn osc7_percent_encoded_chinese() {
+        // "咖啡" percent-encoded UTF-8
+        let data = osc7_bel("host", "/%E5%92%96%E5%95%A1");
+        assert_eq!(extract_osc7_cwd(&data), Some("/咖啡".to_string()));
+    }
+
+    #[test]
+    fn osc7_embedded_in_larger_buffer() {
+        let mut data = b"some output before\r\n".to_vec();
+        data.extend(osc7_bel("host", "/some/dir"));
+        data.extend(b"\r\nmore output after");
+        assert_eq!(extract_osc7_cwd(&data), Some("/some/dir".to_string()));
+    }
+
+    #[test]
+    fn osc7_absent_returns_none() {
+        let data = b"ordinary terminal output\r\n$ ls";
+        assert_eq!(extract_osc7_cwd(data), None);
+    }
+
+    #[test]
+    fn osc7_windows_style_path() {
+        // PowerShell emits file:///C:/Users/foo
+        let data = osc7_bel("", "/C:/Users/foo/project");
+        assert_eq!(
+            extract_osc7_cwd(&data),
+            Some("/C:/Users/foo/project".to_string())
+        );
+    }
+
+    // ── find_preset ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn find_preset_known_tools() {
+        for tool in &["claude", "gemini", "hermes"] {
+            assert!(find_preset(tool).is_some(), "preset not found for {tool}");
+        }
+    }
+
+    #[test]
+    fn find_preset_unknown_returns_none() {
+        assert!(find_preset("codex").is_none());
+        assert!(find_preset("").is_none());
+        assert!(find_preset("gpt").is_none());
+    }
+
+    #[test]
+    fn find_preset_resume_program_matches_tool() {
+        let p = find_preset("claude").unwrap();
+        assert_eq!(p.resume_program, Some("claude"));
+        assert_eq!(p.resume_args_before, &["--resume"]);
+        assert!(p.resume_args_after.is_empty());
+    }
+
+    // ── session_id_pattern (injection guard) ──────────────────────────────────
+
+    /// Confirm that valid tokens are accepted and injected flag strings are rejected.
+    /// Mirrors the validation logic in tier_terminal_resume.
+    fn token_matches(tool: &str, token: &str) -> bool {
+        let preset = find_preset(tool).unwrap();
+        match preset.token_format {
+            Some(fmt) => regex::Regex::new(fmt).unwrap().is_match(token),
+            None => false,
+        }
+    }
+
+    #[test]
+    fn claude_token_valid_uuid() {
+        assert!(token_matches(
+            "claude",
+            "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        ));
+    }
+
+    #[test]
+    fn claude_token_rejects_injection() {
+        // Attacker appends extra flag — must be rejected
+        assert!(!token_matches(
+            "claude",
+            "a1b2c3d4-e5f6-7890-abcd-ef1234567890 --dangerously-skip-permissions"
+        ));
+        assert!(!token_matches("claude", ""));
+        assert!(!token_matches("claude", "../../etc/passwd"));
+    }
+
+    #[test]
+    fn hermes_token_valid_format() {
+        assert!(token_matches("hermes", "20240115_143022_a1b2c3"));
+    }
+
+    #[test]
+    fn hermes_token_rejects_invalid() {
+        assert!(!token_matches("hermes", "not-a-hermes-token"));
+        assert!(!token_matches("hermes", "20240115_143022_a1b2c3 --extra"));
+    }
+
+    #[test]
+    fn sentinel_done_regex_accepts_hyphenated_pane_ids() {
+        let re = sentinel_done_regex();
+        let caps = re
+            .captures(b"[COFFEE-DONE:pane-2->pane-1]")
+            .expect("hyphenated DONE marker should match");
+        let marker = parse_sentinel_done_caps(&caps).expect("parsed marker");
+        assert_eq!(marker.task_id, None);
+        assert_eq!(marker.emitter_pane_idx, 2);
+        assert_eq!(marker.target_pane_idx, 1);
+    }
+
+    #[test]
+    fn sentinel_done_regex_accepts_legacy_compact_pane_ids() {
+        let re = sentinel_done_regex();
+        let caps = re
+            .captures(b"[COFFEE-DONE:pane2->pane1]")
+            .expect("compact DONE marker should match");
+        let marker = parse_sentinel_done_caps(&caps).expect("parsed marker");
+        assert_eq!(marker.task_id, None);
+        assert_eq!(marker.emitter_pane_idx, 2);
+        assert_eq!(marker.target_pane_idx, 1);
+    }
+
+    #[test]
+    fn sentinel_done_regex_accepts_task_markers() {
+        let re = sentinel_done_regex();
+        let caps = re
+            .captures(b"[COFFEE-DONE task=abc-123 from=pane-3 to=pane-1]")
+            .expect("task DONE marker should match");
+        let marker = parse_sentinel_done_caps(&caps).expect("parsed marker");
+        assert_eq!(marker.task_id.as_deref(), Some("abc-123"));
+        assert_eq!(marker.emitter_pane_idx, 3);
+        assert_eq!(marker.target_pane_idx, 1);
+    }
+
+    #[test]
+    fn extract_latest_sentinel_result_block_prefers_matching_task() {
+        let text = r#"
+[COFFEE-RESULT-BEGIN task=old from=pane-2 to=pane-1]
+summary: old
+[COFFEE-RESULT-END task=old]
+[COFFEE-RESULT-BEGIN task=new from=pane-3 to=pane-1]
+summary: new
+evidence:
+- hit
+[COFFEE-RESULT-END task=new]
+"#;
+        let block =
+            extract_latest_sentinel_result_block(text, Some("new")).expect("matching result block");
+        assert_eq!(block.task_id, "new");
+        assert_eq!(block.from_pane_idx, 3);
+        assert_eq!(block.to_pane_idx, 1);
+        assert!(block.body.contains("summary: new"));
+    }
+}

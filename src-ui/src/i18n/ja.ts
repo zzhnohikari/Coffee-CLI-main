@@ -1,0 +1,137 @@
+export const ja = {
+  'app.title': 'Coffee CLI',
+  'explorer.tab.computer': 'マイコンピュータ',
+  'explorer.tab.workspace': 'ワークスペース',
+  'explorer.workspace.select-dir': '作業フォルダをクリックして選択',
+
+  // Context Menu
+  'menu.copy_abs': '絶対パスをコピー',
+  'menu.copy_rel': '相対パスをコピー',
+  'menu.copy_ref': '@reference としてコピー',
+  'menu.cut': '切り取り',
+  'menu.copy': 'コピー',
+  'menu.paste': '貼り付け',
+  'menu.select_all': 'すべて選択',
+  'menu.rename': '名前を変更',
+  'menu.delete': '削除',
+  'menu.show_in_folder': 'エクスプローラーで表示',
+
+  // Drive kinds (Quick Access)
+  'drive.desktop': 'デスクトップ',
+  'drive.downloads': 'ダウンロード',
+  'drive.documents': 'ドキュメント',
+  'drive.pictures': 'ピクチャ',
+  'drive.music': 'ミュージック',
+  'drive.videos': 'ビデオ',
+  'drive.home': 'ホーム',
+  'drive.drive': '{label} ドライブ',
+  'drive.root': 'ルート (/)',
+  'drive.volume': '{label}',
+
+  // Tools
+  'tool.terminal': 'ターミナル',
+  'tool.remote': 'リモートターミナル',
+  'tool.remote.short': 'リモート',
+  'tool.vibeid': '性格診断',
+  'tool.vibeid.requires_cc': 'Claude Code のみ',
+  'tool.multi_agent': 'マルチエージェント',
+  'tool.two_agent': 'デュアルエージェント',
+  'tool.three_agent': 'トリプルエージェント',
+  'library.agent_tools': 'Agent ツール',
+  'sentinel.protocol': 'センチネルプロトコル',
+  'tool.two_split': '独立2画面',
+  'tool.three_split': '独立3画面',
+  'tool.four_split': '独立4画面',
+  'tool.hyper_agent': 'Hyper-Agent',
+  'hyper_agent.ready': 'Hyper-Agent を起動しました：ローカルの OpenClaw / Hermes Agent は Coffee CLI の全ウィンドウを閲覧・指揮する管理者権限を持ちました。ソーシャルアプリで OpenClaw / Hermes Agent と対話すれば、彼らがあなたの CEO となり、全 Agent を率いて作業を継続します。',
+  'hyper_agent.first_time_hint': '初めて使う場合は、このルールを OpenClaw / Hermes Agent に貼り付けて、稼働中のすべての Agent を操作する方法を覚えさせてください：',
+  'hyper_agent.show_setup_again': 'セットアップ説明を再表示',
+  'tool_config.command': '起動コマンド',
+  'tool_config.extra_args': '追加引数',
+  'tool_config.default_cwd': '起動ディレクトリ',
+  'tool_config.history_path': '会話履歴ディレクトリ',
+  'tool_config.reset': 'リセット',
+  'tool_config.cancel': 'キャンセル',
+  'tool_config.save': '保存',
+  'vibeid.need_insights_confirm': '性格診断には Claude Code の使用状況レポートが必要です。\n\n/insights を自動実行します（約 1〜2 分）。完了後、性格診断が自動的に開始されます。\n\n続行しますか？',
+  'vibeid.insights_timeout': 'レポートの生成がタイムアウトしました。後でもう一度試すか、Claude Code タブで /insights を手動で実行してください。',
+
+  // Remote Terminal
+  'remote.title': 'リモートターミナル',
+  'remote.host': 'ホスト',
+  'remote.host_placeholder': '例: 192.168.1.100',
+  'remote.username': 'ユーザー名',
+  'remote.password': 'パスワード',
+  'remote.connect': '接続',
+  'remote.connecting': '接続中...',
+  'remote.connect_failed': '接続に失敗しました',
+
+  'tab.new': 'ツールを選択',
+  'chat.no_records': '読み取り可能な会話履歴が見つかりません。',
+
+
+  // Task Board
+  'task.input_placeholder': 'タスクを入力...',
+  'task.notes_placeholder': 'メモを追加...',
+  'task.section.working': '進行中',
+  'task.section.todo': '未着手',
+  'task.section.done': '完了',
+  'task.greeting.morning': 'おはようございます。今日の予定は？',
+  'task.greeting.afternoon': 'こんにちは。残りのタスクは？',
+  'task.greeting.evening': 'こんばんは。何か始めますか？',
+  'task.tab.tasks': 'タスク',
+  'task.tab.sessions': '履歴',
+  'task.default_title': '新しいタスク',
+  'task.search_sessions': 'セッションを検索...',
+  'menu.no_recent': '最近のセッションはありません',
+  'task.turns': '{count} ターン',
+
+  // Actions
+  'action.close': '閉じる',
+  'action.resume_terminal': 'このセッションを続ける',
+
+  // Time
+  'time.just_now': 'たった今',
+  'time.today': '今日',
+  'time.yesterday': '昨日',
+  'time.days_ago': '{days} 日前',
+
+  // Session
+  'session.max': '同時に開けるセッションは最大 5 つです。',
+
+  // Theme Menu
+  'theme.section.color': 'カラー',
+  'theme.section.shape': 'シェイプ',
+  'theme.section.icons': 'アイコン',
+  'theme.color.light': 'ライト',
+  'theme.color.dark': 'ダーク',
+  'theme.color.cappuccino': 'コードダーク',
+  'theme.color.sakura': '夜桜',
+  'theme.color.lavender': 'ラベンダー',
+  'theme.color.mint': 'ミント',
+  'theme.color.obsidian': 'オブシディアン',
+  'theme.color.cobalt': 'コバルト',
+  'theme.color.moss': 'モス',
+
+  // Gambit · 一手
+  'gambit.title': '一手',
+  'gambit.placeholder': '静かに一手を思案... (Ctrl+Enterで送信、Enterで改行、画像貼付可)',
+  'gambit.send_failed_hint': 'まず pane をクリックしてから送信',
+  'gambit.send_empty_hint': 'メッセージを入力するか画像を貼り付けてください (Ctrl+V)',
+  'gambit.ctx_cut': '切り取り',
+  'gambit.ctx_copy': 'コピー',
+  'gambit.ctx_paste': '貼り付け',
+  'gambit.ctx_select_all': 'すべて選択',
+
+  'mode.take_a_break': 'ひと休み',
+  'mode.back_to_work': '仕事に戻る',
+
+  'heatmap.title': 'セッション {sessions} 回・メッセージ {messages} 件',
+  'heatmap.title_empty': 'まだ何もありません — AI と話してマスを点灯させよう',
+  'heatmap.legend_less': '少',
+  'heatmap.legend_more': '多',
+  'heatmap.tooltip_some': '{date} · メッセージ {count} 件',
+  'heatmap.tooltip_one': '{date} · メッセージ 1 件',
+  'heatmap.tooltip_none': '{date} · アクティビティなし',
+
+} as const;

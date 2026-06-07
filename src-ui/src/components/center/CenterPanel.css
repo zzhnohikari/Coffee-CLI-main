@@ -1,0 +1,1377 @@
+.main-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-terminal);
+  border-top: none;
+  border-radius: 0; /* Fully flush, edge to edge */
+}
+
+.chrome-tabs-header {
+  display: flex;
+  align-items: flex-end;
+  padding: 8px 12px 0 12px;
+  border-bottom: none;
+  position: relative;
+  z-index: 10;
+  gap: 2px;
+}
+
+.chrome-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: transparent;
+  border-radius: var(--shape-radius-tab);
+  cursor: pointer;
+  user-select: none;
+  flex: 0 1 auto;
+  max-width: 220px;
+  transition: background 0.15s, color 0.15s;
+}
+
+
+.chrome-tab:hover:not(.active) {
+  background: var(--bg-hover);
+}
+
+.chrome-tab.active {
+  color: var(--text-1);
+  background: var(--bg-terminal);
+  z-index: 2;
+  /* Prevent active tab from lagging behind during theme changes (flash bug) */
+  transition: color 0.15s;
+}
+
+/* Chrome 'flare' pseudo-elements bridging the tab to the terminal background */
+.chrome-tab.active::before,
+.chrome-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+}
+
+.chrome-tab.active::before {
+  left: -12px;
+  background: radial-gradient(circle at top left, transparent 12px, var(--bg-terminal) 12.5px);
+}
+
+.chrome-tab.active::after {
+  right: -12px;
+  background: radial-gradient(circle at top right, transparent 12px, var(--bg-terminal) 12.5px);
+}
+
+.chrome-tab-new {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  margin-left: 6px;
+  margin-bottom: 5px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.chrome-tab-new:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+/* ─── Tab Actions (Status Dots ↔ Close Button Overlay) ─── */
+.tab-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.tab-close-btn {
+  position: absolute;
+  inset: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, background-color 0.15s, color 0.15s;
+}
+
+.chrome-tab:hover .tab-close-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.tab-close-btn:hover {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+/* ─── Tab Status Indicator (3×3 dot grid) ─── */
+
+@keyframes tab-status-wave {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+.tab-status-grid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 3px);
+  grid-template-rows: repeat(3, 3px);
+  gap: 2px;
+  place-content: center;
+  flex-shrink: 0;
+  transition: opacity 0.15s ease;
+}
+
+.chrome-tab:hover .tab-status-grid {
+  opacity: 0;
+}
+
+.tab-status-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  animation: tab-status-wave 1.2s ease-in-out infinite;
+}
+
+/* idle — Wave-Double — green */
+.status-idle .tab-status-dot { background-color: #34d399; box-shadow: 0 0 3px #34d39988; }
+.status-idle .tab-status-dot:nth-child(1) { animation-delay: 0s; }
+.status-idle .tab-status-dot:nth-child(2) { animation-delay: 0.15s; }
+.status-idle .tab-status-dot:nth-child(3) { animation-delay: 0.3s; }
+.status-idle .tab-status-dot:nth-child(4) { animation-delay: 0.1s; }
+.status-idle .tab-status-dot:nth-child(5) { animation-delay: 0.25s; }
+.status-idle .tab-status-dot:nth-child(6) { animation-delay: 0.4s; }
+.status-idle .tab-status-dot:nth-child(7) { animation-delay: 0s; }
+.status-idle .tab-status-dot:nth-child(8) { animation-delay: 0.15s; }
+.status-idle .tab-status-dot:nth-child(9) { animation-delay: 0.3s; }
+
+/* working — Snake-CCW — Claude orange (matches the "Thinking..." color in Claude Code CLI output) */
+.status-working .tab-status-dot { background-color: #D97757; box-shadow: 0 0 3px #D9775788; }
+.status-working .tab-status-dot:nth-child(1) { animation-delay: 0s; }
+.status-working .tab-status-dot:nth-child(2) { animation-delay: 1.05s; }
+.status-working .tab-status-dot:nth-child(3) { animation-delay: 0.9s; }
+.status-working .tab-status-dot:nth-child(4) { animation-delay: 0.15s; }
+.status-working .tab-status-dot:nth-child(5) { animation-delay: 0.6s; }
+.status-working .tab-status-dot:nth-child(6) { animation-delay: 0.75s; }
+.status-working .tab-status-dot:nth-child(7) { animation-delay: 0.3s; }
+.status-working .tab-status-dot:nth-child(8) { animation-delay: 0.45s; }
+.status-working .tab-status-dot:nth-child(9) { animation-delay: 0.6s; }
+
+/* wait_input — Ripple — blue. Claude is blocked on a permission prompt
+   ("approve / deny" dialog or similar); user must intervene. */
+.status-waiting .tab-status-dot { background-color: #60a5fa; box-shadow: 0 0 3px #60a5fa88; }
+.status-waiting .tab-status-dot:nth-child(1) { animation-delay: 0.3s; }
+.status-waiting .tab-status-dot:nth-child(2) { animation-delay: 0.15s; }
+.status-waiting .tab-status-dot:nth-child(3) { animation-delay: 0.3s; }
+.status-waiting .tab-status-dot:nth-child(4) { animation-delay: 0.15s; }
+.status-waiting .tab-status-dot:nth-child(5) { animation-delay: 0s; }
+.status-waiting .tab-status-dot:nth-child(6) { animation-delay: 0.15s; }
+.status-waiting .tab-status-dot:nth-child(7) { animation-delay: 0.3s; }
+.status-waiting .tab-status-dot:nth-child(8) { animation-delay: 0.15s; }
+.status-waiting .tab-status-dot:nth-child(9) { animation-delay: 0.3s; }
+
+/* ─── Terminal Wrapper ─── */
+
+.terminal-wrapper {
+  position: relative;
+  flex-direction: column;
+}
+
+/* ─── Launchpad Grid Overlay ─── */
+.launchpad-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.launchpad-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.launchpad-bg img,
+.launchpad-bg video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* User-controlled dim overlay (--wallpaper-dim is set on :root from app-state). */
+.launchpad-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, var(--wallpaper-dim, 0.3));
+  pointer-events: none;
+}
+
+.launchpad-slider-viewport {
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.launchpad-slider-track {
+  display: flex;
+  width: 200%;
+  height: 100%;
+  transition: transform 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.launchpad-slider-track.slide-to-games {
+  transform: translateX(-50%);
+}
+
+.launchpad-page {
+  width: 50%;
+  height: 100%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+}
+
+.launchpad-inner {
+  max-width: 628px;
+  width: 100%;
+  padding: 32px;
+}
+
+.launchpad-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  width: 100%;
+}
+
+/* Card + folder button share a group wrapper */
+.launchpad-card-group {
+  display: flex;
+  flex-direction: row;
+  /* Transparent placeholder border so Panel-shape's border-color
+     transition has a known starting value. Without it, switching to
+     Panel made border-color animate from `currentColor` (≈ white text
+     in dark themes) → var(--border), causing a 150ms white flash. */
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+  transition: transform 0.25s, box-shadow 0.25s;
+}
+
+.launchpad-card-group:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
+}
+
+/* Frosted glass cards when wallpaper is active.
+   bg + backdrop-filter MUST live on the rounded WRAPPER, not the
+   inner rectangular .launchpad-card. Putting them on the inner
+   card creates a fresh stacking context whose backdrop-filter is
+   promoted to its own GPU layer; that layer ignores the wrapper's
+   `overflow:hidden + border-radius` clip, leaking past the rounded
+   corners — visible as 4 sharp corner residues on Soft (16px) and
+   as a colored blur fringe on the inner card's exposed left edge
+   (the right edge is shielded by .launchpad-folder-btn). Same fix
+   pattern as [data-shape="glass"] in global.css. */
+.launchpad-has-bg .launchpad-card-group {
+  background: rgba(18, 18, 24, 0.52);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+}
+.launchpad-has-bg .launchpad-card {
+  background: transparent !important;
+}
+.launchpad-has-bg .launchpad-card-group:hover {
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+[data-theme="light"] .launchpad-has-bg .launchpad-card-group {
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.launchpad-card {
+  flex: 1;
+  background: var(--bg-card);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 16px 16px 16px 24px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  height: 80px;
+  cursor: pointer;
+  position: relative;
+  transition: background-color 0.2s;
+  min-width: 0;
+}
+
+/* Folder button — pinned to right side of card */
+.launchpad-folder-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--text-3);
+  opacity: 0.18;
+  transition: opacity 0.15s;
+}
+
+.launchpad-folder-btn:hover {
+  opacity: 0.7;
+}
+
+.launchpad-folder-btn svg {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.launchpad-card-disabled .launchpad-folder-btn {
+  pointer-events: none;
+}
+
+/* (Per-tool launch settings now live on the Library cards, not on
+   the main launchpad — gear is a one-time setup affordance, not a
+   recurring action like the folder picker. See .library-gear-btn.) */
+
+/* Remove — no longer used */
+.launchpad-card-main {
+  display: contents;
+}
+
+/* Disabled state — tool not installed */
+.launchpad-card-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: auto;
+}
+
+.launchpad-card-disabled:hover {
+  transform: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+}
+
+
+
+.launchpad-icon {
+  /* Fixed pixel box. Every icon inside is forced to fill this box so
+     visual sizes stay uniform regardless of the source asset's internal
+     viewBox utilization (brand SVGs had wildly different content-to-
+     viewBox ratios before). Tune here if the grid density changes. */
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Force every icon's outermost element (span wrapper, <img>, or inline
+   <svg>) to fill the fixed-size container. object-fit: contain preserves
+   the asset's aspect ratio. Inline `width="1em"` attrs on the source
+   components become no-ops under this override, which is the goal:
+   one source of truth for visible size lives in CSS. */
+.launchpad-icon > *,
+.launchpad-icon > * > svg {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain;
+}
+
+.launchpad-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.launchpad-card span {
+  font-size: 18px; /* Increased text size */
+  font-weight: 500;
+  color: var(--text-1);
+  white-space: nowrap;
+}
+
+.launchpad-card-cwd {
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  color: var(--text-3) !important;
+  opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+  letter-spacing: 0.3px;
+}
+
+/* (folder button is now a transparent overlay — no per-shape overrides needed) */
+
+/* ─── Premium Toast Notification ─── */
+
+@keyframes slideDownToast {
+  0% { transform: translate(-50%, -200%); opacity: 0; }
+  15% { transform: translate(-50%, 0); opacity: 1; }
+  85% { transform: translate(-50%, 0); opacity: 1; }
+  100% { transform: translate(-50%, -200%); opacity: 0; }
+}
+
+.toast-notification {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-panel);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: slideDownToast 3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  pointer-events: none;
+}
+
+/* ─── Resumable Sessions ─── */
+
+.resume-section {
+  margin-top: 24px;
+  width: 100%;
+}
+
+.resume-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+  padding-left: 4px;
+}
+
+.resume-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.resume-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border: 1px solid transparent;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: transform 0.2s, background-color 0.2s, box-shadow 0.2s;
+}
+
+.resume-card:hover {
+  transform: translateY(-2px);
+  background-color: var(--bg-card);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.06);
+}
+
+.resume-card-icon {
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.resume-card-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.resume-card-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-1);
+}
+
+.resume-card-token {
+  font-size: 11px;
+  color: var(--text-3, var(--text-2));
+  font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  opacity: 0.7;
+}
+
+.resume-card-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.12);
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  letter-spacing: 0.3px;
+}
+
+/* ─── Mode Switch Button (Arcade vs Tools) ─────────────── */
+.mode-switch-btn {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  min-width: 36px;
+  padding: 0 5px; /* Ensures circular shape when drawer is closed (24px + 5px + 5px + 2px border = 36px) */
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-2);
+  cursor: pointer;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mode-switch-btn:hover {
+  color: var(--text-1);
+}
+
+.mode-switch-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 13px;
+  color: var(--accent);
+  background: transparent;
+  transition: transform 0.4s ease;
+}
+
+/* ─── Desktop Empty State ──────────────────────────────────────────────── */
+
+.launchpad-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 80px 24px;
+  text-align: center;
+}
+
+.empty-icon {
+  color: var(--text-3);
+  opacity: 0.6;
+}
+
+.empty-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-1);
+}
+
+.empty-hint {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+/* ─── Library (Agents / Games) ─────────────────────────────────────────── */
+
+.library-page {
+  position: relative;
+  align-items: flex-start;
+}
+
+.library-page .launchpad-inner {
+  max-width: 1200px;
+  padding-top: 32px;
+  padding-bottom: 100px;
+}
+
+.library-grid {
+  display: grid;
+  /* minmax(0, 1fr) — without it, long item names (e.g. "Independent
+     Triple", "Personality Test") force columns past 1/4 width and the
+     last column overflows the panel. Pairs with min-width:0 on
+     .library-item-name so the ellipsis can actually clip. */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+  align-content: start;
+}
+
+/* Agent Tools sub-grid: same 4-col layout as the AI CLIs grid above,
+   so every row holds 4 cards:
+     Row 1: multi-agent | three-agent | two-agent | installer
+     Row 2: four-split  | three-split | two-split | vibeid
+   协作 counts and 独立 counts line up column-by-column (4↔4, 3↔3, 2↔2). */
+.library-grid.library-grid--tools {
+  margin-top: 8px;
+}
+
+/* Section heading between the AI CLIs grid and the Agent Tools grid. */
+.library-section-title {
+  margin-top: 28px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2, #aaa);
+  user-select: none;
+}
+
+.library-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  /* Unselected cards sit at reduced opacity so the SELECTED ones (full
+     opacity + accent border) visually pop forward. Inverse of the usual
+     "highlight selected" — we instead "fade unselected", which keeps the
+     selected look clean (no background tint, no shadow, just normal). */
+  opacity: 0.55;
+  transition: opacity 0.18s, border-color 0.18s;
+}
+
+.library-item:hover {
+  opacity: 0.85;
+  border-color: var(--accent);
+}
+
+/* Selected state — pinned to launchpad. Same 1px border width as the
+   default (only the COLOR changes), so toggling pinned never shifts
+   the card by even a pixel. Combined with full opacity, the card
+   "comes into focus" while its peers stay muted. No background tint:
+   the contrast against still-faded neighbors is enough. */
+.library-item.is-pinned {
+  opacity: 1;
+  border-color: var(--accent);
+}
+.library-item.is-pinned:hover {
+  opacity: 1;
+}
+
+.library-item-icon {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  font-size: 22px;
+  color: var(--text-1);
+}
+
+.library-item-icon img {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+}
+
+.library-item-icon svg {
+  width: 28px;
+  height: 28px;
+}
+
+.library-item-name {
+  flex: 1;
+  /* Required so this flex child can shrink below its intrinsic
+     content width — otherwise text-overflow:ellipsis is a no-op
+     and long names push the grid column past its 1fr share. */
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* (.library-pin-btn removed — pin state is now signaled by border +
+   opacity on .library-item.is-pinned, no right-side checkmark. The
+   right slot is reserved for the launch-settings gear on CLI tools.) */
+
+/* Per-tool launch settings gear, shown in the same right-edge slot
+   formerly occupied by the pin checkmark. Only rendered for the 7 CLI
+   tools that take a launch path. Click → opens the override modal;
+   stopPropagation so it doesn't also toggle pin/unpin. Visual treatment
+   matches the inline globe / launchpad gear pattern (0.18 baseline /
+   0.7 hover). */
+.library-gear-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--text-3);
+  background: transparent;
+  border: none;
+  opacity: 0.35;
+  transition: opacity 0.15s, color 0.15s;
+}
+.library-item:hover .library-gear-btn {
+  opacity: 0.6;
+}
+.library-gear-btn:hover {
+  opacity: 1 !important;
+  color: var(--accent);
+}
+.library-gear-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.library-counter {
+  position: absolute;
+  bottom: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+  z-index: 2;
+  letter-spacing: 0.5px;
+}
+
+.library-tabs {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  z-index: 2;
+}
+
+.library-tab {
+  padding: 8px 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.library-tab:hover {
+  color: var(--text-1);
+}
+
+.library-tab.active {
+  background: var(--accent);
+  color: #1a1917;
+}
+
+/* ─── Library Skeleton Loading ─────────────────────────────────────────── */
+
+@keyframes library-skeleton-pulse {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 0.65; }
+}
+
+.library-item-skeleton {
+  pointer-events: none;
+  border-color: transparent;
+  cursor: default;
+}
+
+.library-item-skeleton:hover {
+  border-color: transparent;
+}
+
+.library-skeleton-block,
+.library-skeleton-line {
+  background: var(--bg-hover);
+  animation: library-skeleton-pulse 1.5s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+
+.library-skeleton-line {
+  flex: 1;
+  height: 14px;
+  max-width: 55%;
+  animation-delay: 0.15s;
+}
+
+/* (.library-skeleton-pin removed — skeleton no longer reserves a
+   right-side slot now that pin checkmarks are gone.) */
+
+/* ─── Tool launch-override modal ─────────────────────────────────── */
+/* Theme-driven: reads --bg-panel / --text-1 / --accent / --border-*  */
+/* etc. so dawn (light) and dark themes both work without re-coloring */
+/* anything inline. No descriptive copy — only field labels.          */
+
+.tool-config-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+/* Visual language unified with .remote-form-card (Remote Terminal
+   popup): same 380px width, dedicated header bar with bottom
+   border, padded body, larger inputs (14px / 10×14 padding) so
+   typed values are easy to read. Both modals are config-input
+   forms — keeping their styling identical is the contract. */
+.tool-config-modal {
+  width: 380px;
+  max-width: 92vw;
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-1);
+  font-family: var(--font-primary);
+  font-size: 13px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.tool-config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.tool-config-close {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 0;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.tool-config-close:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+}
+
+.tool-config-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.tool-config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.tool-config-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tool-config-input {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  font-family: 'Cascadia Mono', 'Cascadia Code', Consolas, monospace;
+  font-size: 14px;
+  outline: none;
+  resize: vertical;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.tool-config-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(196, 149, 106, 0.15);
+}
+
+.tool-config-input::placeholder {
+  color: var(--text-2);
+  opacity: 0.5;
+}
+
+.tool-config-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 0 20px 20px;
+}
+
+.tool-config-btn {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-family: inherit;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.tool-config-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tool-config-btn-subtle {
+  background: transparent;
+  color: var(--text-1);
+}
+.tool-config-btn-subtle:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.tool-config-btn-primary {
+  background: var(--accent);
+  color: var(--bg-app);
+  border-color: transparent;
+  font-weight: 600;
+}
+.tool-config-btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+/* ─── Tab Drag Ghost (drag-to-detach feedback) ─── */
+
+.tab-drag-ghost {
+  position: fixed;
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-1);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+  z-index: 9999;
+  white-space: nowrap;
+  opacity: 0.92;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.tab-drag-ghost.ready {
+  border-color: #34d399;
+  box-shadow: 0 12px 40px rgba(52, 211, 153, 0.25), 0 0 0 1px rgba(52, 211, 153, 0.3);
+}
+
+/* ─── Terminal Card Subtle Remote Hint ─── */
+
+.remote-link-hint {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  color: var(--text-3);
+  opacity: 0.18;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  transition: opacity 0.15s;
+}
+
+.remote-link-hint:hover {
+  opacity: 0.7;
+}
+
+/* ─── Remote Terminal Connection Form ─── */
+
+.remote-form-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(6px);
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.remote-form-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  /* Soft optical center compensation */
+  margin-top: -4vh; 
+}
+
+.remote-history-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  max-width: 440px;
+}
+
+.remote-pill {
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-pill);
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.2s;
+  color: var(--text-2);
+}
+
+.remote-pill:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.remote-pill-ws {
+  color: #cca47b;
+  border-color: rgba(204, 164, 123, 0.2);
+}
+.remote-pill-ws:hover {
+  border-color: rgba(204, 164, 123, 0.4);
+}
+
+.remote-pill-ssh {
+  color: #8da2b3;
+  border-color: rgba(141, 162, 179, 0.2);
+}
+.remote-pill-ssh:hover {
+  border-color: rgba(141, 162, 179, 0.4);
+}
+
+.remote-pill-proto {
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.7;
+  margin-right: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.remote-pill-close {
+  margin-left: 8px;
+  background: transparent;
+  border: none;
+  color: currentColor;
+  opacity: 0.5;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: all 0.2s;
+}
+
+.remote-pill-close:hover {
+  opacity: 1;
+  background: rgba(255, 85, 85, 0.2);
+  color: #ff5555;
+}
+
+
+.remote-form-card {
+  width: 380px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.remote-form-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+/* Title span only — exclude the icon span that `inlineSvgIcon`
+   renders as <span aria-hidden>. Without `:not([aria-hidden])`
+   the icon span ALSO got `flex: 1`, which beats its own inline
+   `width: 1em` (flex-basis:0 wins over width on flex items),
+   stretching it to half the header and exposing the inner
+   PowerShell SVG's hardcoded 128×128 dimensions. */
+.remote-form-header > span:not([aria-hidden]) {
+  flex: 1;
+}
+
+.remote-form-close {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.remote-form-close:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+}
+
+.remote-form-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Protocol Toggle */
+.remote-protocol-toggle {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-card);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  border: 1px solid var(--border);
+}
+
+.remote-proto-btn {
+  flex: 1;
+  padding: 7px 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  letter-spacing: 0.3px;
+}
+
+.remote-proto-btn.active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.remote-proto-btn:not(.active):hover {
+  color: var(--text-1);
+}
+
+.remote-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.remote-form-row label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.remote-form-host-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.remote-input {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-family: 'Cascadia Mono', 'Cascadia Code', Consolas, monospace;
+  color: var(--text-1);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.remote-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(196, 149, 106, 0.15);
+}
+
+.remote-input::placeholder {
+  color: var(--text-2);
+  opacity: 0.5;
+}
+
+.remote-input-host {
+  flex: 1;
+}
+
+.remote-input-port {
+  width: 70px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.remote-port-sep {
+  color: var(--text-2);
+  font-size: 16px;
+  font-weight: 500;
+  opacity: 0.5;
+}
+
+.remote-connect-btn {
+  width: 100%;
+  padding: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-top: 4px;
+}
+
+.remote-connect-btn:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.remote-connect-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.remote-connect-btn.status-connecting {
+  opacity: 0.8;
+  cursor: wait;
+}
+
+.remote-connect-btn.status-failed {
+  background: #ef4444;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
+}
+
+/* Multi-agent mode toggle — floating icon button in pane's top-right. */
+.multi-agent-toggle {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 10;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--text-muted, #888);
+  background: var(--bg-tertiary, rgba(15, 15, 15, 0.6));
+  border: 1px solid var(--border-color, #2a2a2a);
+  border-radius: 4px;
+  cursor: pointer;
+  /* Color transitions only per CLAUDE.md §4 (no translate/scale on hover). */
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.multi-agent-toggle:hover {
+  color: var(--text-primary, #ddd);
+  background: var(--bg-hover, rgba(45, 45, 45, 0.8));
+  border-color: var(--accent, #6cc275);
+}
+
+.multi-agent-toggle.is-on {
+  color: var(--accent, #6cc275);
+  border-color: var(--accent, #6cc275);
+}
