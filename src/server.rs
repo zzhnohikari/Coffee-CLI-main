@@ -980,7 +980,7 @@ fn tier_terminal_start_blocking(
         if cfg_cwd.is_empty() {
             std::path::PathBuf::default()
         } else {
-            std::path::PathBuf::from(cfg_cwd)
+            crate::tool_config::expand_path(&cfg_cwd)
         }
     } else {
         std::path::PathBuf::default()

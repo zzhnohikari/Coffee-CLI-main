@@ -23,12 +23,12 @@
 //! }
 //! ```
 //!
-//! - `command`: full launch executable. Whitespace-split at spawn time —
+//! - `command`: full launch executable. Shell-like split at spawn time —
 //!   first token is the binary, the rest are PREPENDED to args. So
 //!   `"wsl ~/.local/bin/hermes"` becomes argv `["wsl", "~/.local/bin/hermes"]`.
 //!   If empty, the built-in default (e.g. `"claude"` for the claude tool)
-//!   is used. NOT shell-parsed — paths with spaces are not supported in
-//!   v1; document the limitation.
+//!   is used. Simple single/double quotes are supported for paths with
+//!   spaces.
 //! - `extra_args`: appended AFTER the built-in args (so `--mcp-config`
 //!   etc still come first). String list, NOT split.
 //! - `default_cwd`: pre-fills the cwd selector when starting a new tab
@@ -116,16 +116,58 @@ pub fn set(tool: &str, entry: ToolConfigEntry) -> std::io::Result<()> {
     save(&cfg)
 }
 
-/// Whitespace-split the user's `command` field into (binary, prefix_args).
+/// Shell-like split the user's `command` field into (binary, prefix_args).
 /// Returns (None, vec![]) for an empty string — caller falls through to
 /// built-in defaults in that case.
 pub fn parse_command(cmd: &str) -> (Option<String>, Vec<String>) {
-    let mut parts = cmd.split_whitespace();
-    let Some(bin) = parts.next() else {
+    let mut parts = split_command(cmd).into_iter();
+    let Some(raw_bin) = parts.next() else {
         return (None, vec![]);
     };
+    let bin = expand_command_bin(&raw_bin);
     let rest: Vec<String> = parts.map(|s| s.to_string()).collect();
-    (Some(bin.to_string()), rest)
+    (Some(bin), rest)
+}
+
+fn split_command(cmd: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut chars = cmd.chars().peekable();
+    let mut quote: Option<char> = None;
+
+    while let Some(ch) = chars.next() {
+        match (quote, ch) {
+            (Some(q), c) if c == q => quote = None,
+            (Some('"'), '\\') | (None, '\\') => {
+                if let Some(next) = chars.next() {
+                    cur.push(next);
+                } else {
+                    cur.push('\\');
+                }
+            }
+            (Some(_), c) => cur.push(c),
+            (None, '\'' | '"') => quote = Some(ch),
+            (None, c) if c.is_whitespace() => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            (None, c) => cur.push(c),
+        }
+    }
+
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+fn expand_command_bin(bin: &str) -> String {
+    if bin == "~" || bin.starts_with("~/") || bin.starts_with("~\\") {
+        expand_path(bin).to_string_lossy().to_string()
+    } else {
+        bin.to_string()
+    }
 }
 
 /// Expand a leading `~/` or bare `~` to the user's home directory.
@@ -179,6 +221,32 @@ mod tests {
             (
                 Some("docker".into()),
                 vec!["exec".into(), "mybox".into(), "claude".into()]
+            )
+        );
+    }
+
+    #[test]
+    fn parse_quotes_and_tilde_bin() {
+        let home = dirs::home_dir().expect("test needs a home dir");
+        assert_eq!(
+            parse_command("\"/Applications/My CLI.app/Contents/MacOS/my cli\" --flag"),
+            (
+                Some("/Applications/My CLI.app/Contents/MacOS/my cli".into()),
+                vec!["--flag".into()]
+            )
+        );
+        assert_eq!(
+            parse_command("'custom bin' \"two words\" plain"),
+            (
+                Some("custom bin".into()),
+                vec!["two words".into(), "plain".into()]
+            )
+        );
+        assert_eq!(
+            parse_command("~/.cargo/bin/codex --ask-for-approval never"),
+            (
+                Some(home.join(".cargo/bin/codex").to_string_lossy().to_string()),
+                vec!["--ask-for-approval".into(), "never".into()]
             )
         );
     }

@@ -556,7 +556,7 @@ mod tests {
     #[test]
     fn claude_writes_mcp_json_with_url() {
         let pid = unique_pane("claude");
-        let out = prepare_pane_config_dir(&pid, "claude", &ep(), "PROMPT").unwrap();
+        let out = prepare_pane_config_dir(&pid, "claude", &ep(), "PROMPT", None).unwrap();
         let p = out.claude_mcp_config_path.expect("claude returns path");
         let body = fs::read_to_string(&p).unwrap();
         assert!(body.contains("coffee-cli"));
@@ -567,7 +567,7 @@ mod tests {
     #[test]
     fn codex_returns_minus_c_args_only() {
         let pid = unique_pane("codex");
-        let out = prepare_pane_config_dir(&pid, "codex", &ep(), "PROTOCOL BODY").unwrap();
+        let out = prepare_pane_config_dir(&pid, "codex", &ep(), "PROTOCOL BODY", None).unwrap();
         assert!(out.claude_mcp_config_path.is_none());
         assert!(out.gemini_extension_name.is_none());
         assert_eq!(out.codex_extra_args.len(), 4);
@@ -588,7 +588,7 @@ mod tests {
     #[test]
     fn gemini_writes_real_manifest_and_stub() {
         let pid = unique_pane("gemini");
-        let out = prepare_pane_config_dir(&pid, "gemini", &ep(), "GEMINI BODY").unwrap();
+        let out = prepare_pane_config_dir(&pid, "gemini", &ep(), "GEMINI BODY", None).unwrap();
         let name = out
             .gemini_extension_name
             .clone()
@@ -622,7 +622,7 @@ mod tests {
     #[test]
     fn opencode_writes_config_file_with_url_and_allow_permission() {
         let pid = unique_pane("opencode");
-        let out = prepare_pane_config_dir(&pid, "opencode", &ep(), "IGNORED").unwrap();
+        let out = prepare_pane_config_dir(&pid, "opencode", &ep(), "IGNORED", None).unwrap();
         let p = out.opencode_config_path.expect("opencode returns path");
         assert!(out.claude_mcp_config_path.is_none());
         assert!(out.codex_extra_args.is_empty());
@@ -642,7 +642,7 @@ mod tests {
     #[test]
     fn unknown_cli_kind_is_a_noop() {
         let pid = unique_pane("unknown");
-        let out = prepare_pane_config_dir(&pid, "qwen", &ep(), "ignored").unwrap();
+        let out = prepare_pane_config_dir(&pid, "qwen", &ep(), "ignored", None).unwrap();
         assert!(out.claude_mcp_config_path.is_none());
         assert!(out.codex_extra_args.is_empty());
         assert!(out.gemini_extension_name.is_none());
