@@ -1323,11 +1323,25 @@ pub fn spawn(
         Arc::new(Mutex::new(Some(pair.master)));
 
     let (kill_tx, kill_rx) = std::sync::mpsc::channel::<()>();
+    let mut child_killer = child.clone_killer();
+    let child_pid = child.process_id();
 
-    // ── Kill thread: drop PTY master on signal → reader gets EOF → cleanup runs
+    // ── Kill thread: terminate child, then drop PTY master → reader EOF.
+    //
+    // Dropping only the PTY master is not enough for all TUIs. Codex can keep
+    // its native child process alive after the frontend restarts a pane, which
+    // leaves old MCP servers active and makes `/mcp` appear to ignore a newly
+    // saved profile. Use portable-pty's cloned killer so restart/close actually
+    // terminates the direct child while the watcher thread still owns wait().
     let master_for_kill = master_arc.clone();
     std::thread::spawn(move || {
         let _ = kill_rx.recv(); // block until kill_tx.send(()) or sender dropped
+        if let Err(e) = child_killer.kill() {
+            eprintln!(
+                "[Tier Terminal] child kill failed for pid {:?}: {}",
+                child_pid, e
+            );
+        }
         if let Ok(mut guard) = master_for_kill.lock() {
             *guard = None; // drop PTY master → pipe closes
         }
