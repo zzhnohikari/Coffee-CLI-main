@@ -852,8 +852,9 @@ async fn tier_terminal_start(
     // Across all three, `whoami()` returns the deterministic pane id,
     // `list_panes()` marks `is_self: true` on the matching row, and
     // dispatched text auto-prefixes with `[From <pane>]`. No global
-    // config injection, no workspace files written, no env var that
-    // would redirect the CLI's HOME and break auth.
+    // config injection, no workspace files written. Codex gets a scoped
+    // CODEX_HOME so empty profiles do not inherit the user's global Codex
+    // config, while auth.json is copied into that scoped home.
     //
     // For other tools (qwen, hermes, openclaw, opencode, …) this stays
     // a no-op — their multi-agent participation is just "be a regular
@@ -868,6 +869,10 @@ async fn tier_terminal_start(
     let extra_mcp_servers = pane_launch_payload
         .as_ref()
         .map(load_profile_mcp_servers)
+        .unwrap_or_default();
+    let selected_skills = pane_launch_payload
+        .as_ref()
+        .map(|payload| payload.skills.clone())
         .unwrap_or_default();
     {
         let in_multi_agent = session_id.contains("::pane-");
@@ -908,6 +913,7 @@ coffee-cli MCP tools (whoami/list_panes/send_to_pane/read_pane/...) will NOT be 
                 &endpoint,
                 &merge_prompt_sections(&protocol, &profile_prompt_block),
                 Some(extra_mcp_servers.clone()),
+                &selected_skills,
             ) {
                 Ok(paths) => pane_paths = Some(paths),
                 Err(e) => log::warn!(
@@ -3079,6 +3085,7 @@ fn tier_terminal_resume(
                 &endpoint,
                 &protocol,
                 Some(serde_json::Map::new()),
+                &[],
             )
             .map_err(|e| format!("Failed to prepare pane resume config: {e}"))?,
         )

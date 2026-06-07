@@ -38,12 +38,11 @@
 //! never accumulate even across crashes (boot-time prune is the
 //! belt-and-suspenders catch-all).
 //!
-//! Auth safety: we never set `CODEX_HOME` / `GEMINI_CLI_HOME`, so
-//! Codex's `~/.codex/auth.json` and Gemini's `~/.gemini/oauth_creds.json`
-//! always remain reachable. Codex `-c` overrides merge onto the user's
-//! `~/.codex/config.toml` rather than replacing it; Gemini extension
-//! `mcpServers` merge into the user's existing MCP set. User customisation
-//! and credentials are preserved.
+//! Auth safety: Codex panes get an isolated `CODEX_HOME` populated only
+//! with `auth.json`, profile-selected skills, and profile-selected MCP
+//! servers. This prevents empty profiles from inheriting the user's global
+//! Codex config, AGENTS.md, prompts, rules, skills, or MCP servers. Gemini
+//! extension `mcpServers` still merge into the user's existing MCP set.
 //!
 //! Lifecycle: `prune_pane_artifacts()` is called once at app start so
 //! the previous run's leftover dirs go away, again at shutdown for
@@ -52,7 +51,11 @@
 //! `prepare_pane_config_dir()` on every PTY spawn — content is rewritten
 //! idempotently each time, safe to call repeatedly for the same pane id.
 
-use std::{fs, path::PathBuf};
+use std::{
+    collections::HashSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use crate::mcp_server::McpEndpoint;
 use serde_json::{Map, Value};
@@ -112,6 +115,7 @@ pub fn prepare_pane_config_dir(
     endpoint: &McpEndpoint,
     protocol_text: &str,
     extra_mcp_servers: Option<Map<String, Value>>,
+    selected_skills: &[String],
 ) -> std::io::Result<PaneConfigPaths> {
     let dir = panes_root().join(sanitize_pane_id(pane_id));
     fs::create_dir_all(&dir)?;
@@ -164,7 +168,7 @@ pub fn prepare_pane_config_dir(
                 path = inst.display()
             ));
             let codex_home = dir.join("codex-home");
-            prepare_isolated_codex_home(&codex_home, &extra_mcp_servers)?;
+            prepare_isolated_codex_home(&codex_home, &extra_mcp_servers, selected_skills)?;
             out.codex_home_path = Some(codex_home);
         }
         "gemini" => {
@@ -233,6 +237,7 @@ pub fn prepare_pane_config_dir(
 fn prepare_isolated_codex_home(
     target_home: &PathBuf,
     extra_mcp_servers: &Map<String, Value>,
+    selected_skills: &[String],
 ) -> std::io::Result<()> {
     if target_home.exists() {
         let _ = fs::remove_dir_all(target_home);
@@ -243,17 +248,7 @@ fn prepare_isolated_codex_home(
 
     if let Some(src_home) = dirs::home_dir().map(|h| h.join(".codex")) {
         copy_if_exists(&src_home.join("auth.json"), &target_home.join("auth.json"))?;
-        copy_if_exists(&src_home.join("AGENTS.md"), &target_home.join("AGENTS.md"))?;
-        copy_dir_if_exists(&src_home.join("skills"), &target_home.join("skills"))?;
-        copy_dir_if_exists(&src_home.join("prompts"), &target_home.join("prompts"))?;
-        copy_dir_if_exists(&src_home.join("rules"), &target_home.join("rules"))?;
-
-        root = if let Ok(body) = fs::read_to_string(src_home.join("config.toml")) {
-            toml::from_str::<toml::Value>(&body)
-                .unwrap_or_else(|_| toml::Value::Table(toml::map::Map::new()))
-        } else {
-            toml::Value::Table(toml::map::Map::new())
-        };
+        copy_selected_codex_skills(&src_home, target_home, selected_skills)?;
     }
 
     if !root.is_table() {
@@ -290,6 +285,60 @@ fn prepare_isolated_codex_home(
         target_home.join("config.toml"),
         toml::to_string_pretty(&root).unwrap_or_default(),
     )?;
+    Ok(())
+}
+
+fn copy_selected_codex_skills(
+    src_home: &Path,
+    target_home: &Path,
+    selected_skills: &[String],
+) -> std::io::Result<()> {
+    let mut seen = HashSet::new();
+    let mut copied_system_skill = false;
+
+    for raw_name in selected_skills {
+        let name = raw_name.trim();
+        if name.is_empty()
+            || name == "."
+            || name == ".."
+            || name.contains('/')
+            || name.contains('\\')
+        {
+            continue;
+        }
+        if !seen.insert(name.to_string()) {
+            continue;
+        }
+
+        let user_skill = src_home.join("skills").join(name);
+        if user_skill.join("SKILL.md").exists() {
+            copy_dir_if_exists(&user_skill, &target_home.join("skills").join(name))?;
+            continue;
+        }
+
+        let system_skill = src_home.join("skills").join(".system").join(name);
+        if system_skill.join("SKILL.md").exists() {
+            copy_dir_if_exists(
+                &system_skill,
+                &target_home.join("skills").join(".system").join(name),
+            )?;
+            copied_system_skill = true;
+        }
+    }
+
+    if copied_system_skill {
+        copy_if_exists(
+            &src_home
+                .join("skills")
+                .join(".system")
+                .join(".codex-system-skills.marker"),
+            &target_home
+                .join("skills")
+                .join(".system")
+                .join(".codex-system-skills.marker"),
+        )?;
+    }
+
     Ok(())
 }
 
@@ -493,7 +542,7 @@ mod tests {
     #[test]
     fn claude_writes_mcp_json_with_url() {
         let pid = unique_pane("claude");
-        let out = prepare_pane_config_dir(&pid, "claude", &ep(), "PROMPT", None).unwrap();
+        let out = prepare_pane_config_dir(&pid, "claude", &ep(), "PROMPT", None, &[]).unwrap();
         let p = out.claude_mcp_config_path.expect("claude returns path");
         let body = fs::read_to_string(&p).unwrap();
         assert!(body.contains("coffee-cli"));
@@ -504,7 +553,8 @@ mod tests {
     #[test]
     fn codex_returns_minus_c_args_only() {
         let pid = unique_pane("codex");
-        let out = prepare_pane_config_dir(&pid, "codex", &ep(), "PROTOCOL BODY", None).unwrap();
+        let out =
+            prepare_pane_config_dir(&pid, "codex", &ep(), "PROTOCOL BODY", None, &[]).unwrap();
         assert!(out.claude_mcp_config_path.is_none());
         assert!(out.gemini_extension_name.is_none());
         let codex_home = out.codex_home_path.expect("codex returns isolated home");
@@ -516,6 +566,10 @@ mod tests {
         assert!(out.codex_extra_args[3].contains("model_instructions_file"));
         let codex_config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
         assert!(codex_config.contains("[mcp_servers]"));
+        assert!(!codex_home.join("AGENTS.md").exists());
+        assert!(!codex_home.join("prompts").exists());
+        assert!(!codex_home.join("rules").exists());
+        assert!(!codex_home.join("skills").exists());
         // Protocol text actually got written.
         let inst_path = panes_root()
             .join(sanitize_pane_id(&pid))
@@ -536,8 +590,8 @@ mod tests {
                 "args": ["--stdio"]
             }),
         );
-        let out =
-            prepare_pane_config_dir(&pid, "codex", &ep(), "PROTOCOL BODY", Some(extra)).unwrap();
+        let out = prepare_pane_config_dir(&pid, "codex", &ep(), "PROTOCOL BODY", Some(extra), &[])
+            .unwrap();
         let codex_home = out.codex_home_path.expect("codex returns isolated home");
         let codex_config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
         assert!(codex_config.contains("[mcp_servers.selected-only]"));
@@ -548,9 +602,83 @@ mod tests {
     }
 
     #[test]
+    fn codex_copies_only_selected_skills() {
+        let root = panes_root().join(unique_pane("skill-copy"));
+        let src_home = root.join("src-home");
+        let target_home = root.join("target-home");
+        fs::create_dir_all(src_home.join("skills").join("custom")).unwrap();
+        fs::write(
+            src_home.join("skills").join("custom").join("SKILL.md"),
+            "custom",
+        )
+        .unwrap();
+        fs::create_dir_all(src_home.join("skills").join("unused")).unwrap();
+        fs::write(
+            src_home.join("skills").join("unused").join("SKILL.md"),
+            "unused",
+        )
+        .unwrap();
+        fs::create_dir_all(src_home.join("skills").join(".system").join("imagegen")).unwrap();
+        fs::write(
+            src_home
+                .join("skills")
+                .join(".system")
+                .join("imagegen")
+                .join("SKILL.md"),
+            "imagegen",
+        )
+        .unwrap();
+        fs::write(
+            src_home
+                .join("skills")
+                .join(".system")
+                .join(".codex-system-skills.marker"),
+            "marker",
+        )
+        .unwrap();
+
+        copy_selected_codex_skills(
+            &src_home,
+            &target_home,
+            &[
+                "custom".to_string(),
+                "imagegen".to_string(),
+                "missing".to_string(),
+                "../escape".to_string(),
+            ],
+        )
+        .unwrap();
+
+        assert!(target_home
+            .join("skills")
+            .join("custom")
+            .join("SKILL.md")
+            .exists());
+        assert!(target_home
+            .join("skills")
+            .join(".system")
+            .join("imagegen")
+            .join("SKILL.md")
+            .exists());
+        assert!(target_home
+            .join("skills")
+            .join(".system")
+            .join(".codex-system-skills.marker")
+            .exists());
+        assert!(!target_home
+            .join("skills")
+            .join("unused")
+            .join("SKILL.md")
+            .exists());
+        assert!(!target_home.join("escape").exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn gemini_writes_real_manifest_and_stub() {
         let pid = unique_pane("gemini");
-        let out = prepare_pane_config_dir(&pid, "gemini", &ep(), "GEMINI BODY", None).unwrap();
+        let out = prepare_pane_config_dir(&pid, "gemini", &ep(), "GEMINI BODY", None, &[]).unwrap();
         let name = out
             .gemini_extension_name
             .clone()
@@ -584,7 +712,7 @@ mod tests {
     #[test]
     fn opencode_writes_config_file_with_url_and_allow_permission() {
         let pid = unique_pane("opencode");
-        let out = prepare_pane_config_dir(&pid, "opencode", &ep(), "IGNORED", None).unwrap();
+        let out = prepare_pane_config_dir(&pid, "opencode", &ep(), "IGNORED", None, &[]).unwrap();
         let p = out.opencode_config_path.expect("opencode returns path");
         assert!(out.claude_mcp_config_path.is_none());
         assert!(out.codex_extra_args.is_empty());
@@ -604,7 +732,7 @@ mod tests {
     #[test]
     fn unknown_cli_kind_is_a_noop() {
         let pid = unique_pane("unknown");
-        let out = prepare_pane_config_dir(&pid, "qwen", &ep(), "ignored", None).unwrap();
+        let out = prepare_pane_config_dir(&pid, "qwen", &ep(), "ignored", None, &[]).unwrap();
         assert!(out.claude_mcp_config_path.is_none());
         assert!(out.codex_extra_args.is_empty());
         assert!(out.gemini_extension_name.is_none());
