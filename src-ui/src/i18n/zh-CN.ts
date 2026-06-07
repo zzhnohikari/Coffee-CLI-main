@@ -178,5 +178,7 @@ export const zhCN = {
   'profile.edit': '编辑',
   'profile.delete': '删除',
   'profile.toggle_sentinel': '切换哨兵协议',
+  'profile.select_all': '全选',
+  'profile.clear_all': '清空',
 
 } as const;

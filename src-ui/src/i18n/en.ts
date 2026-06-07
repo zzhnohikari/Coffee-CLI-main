@@ -181,6 +181,8 @@ export const en = {
   'profile.edit': 'Edit',
   'profile.delete': 'Delete',
   'profile.toggle_sentinel': 'Toggle sentinel protocol',
+  'profile.select_all': 'Select all',
+  'profile.clear_all': 'Clear',
 
 } as const;
 

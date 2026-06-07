@@ -86,6 +86,11 @@ function launchToolForProfileTool(tool?: string): ToolType {
   return ((tool as ToolType) || null);
 }
 
+function isGeneratedProfileMcpPath(path?: string | null): boolean {
+  const normalized = (path || '').replace(/\\/g, '/');
+  return normalized.includes('/coffee-cli/profile-mcp/');
+}
+
 function normalizeHistoryPath(path?: string | null): string {
   return (path ?? '')
     .replace(/\\/g, '/')
@@ -485,6 +490,7 @@ function EmptyPanePicker({
       env: { ...(profile.env || {}) },
       skills: [...(profile.skills || [])],
       selectedMcpIds: [...(profile.selectedMcpIds || [])],
+      mcpConfigPath: isGeneratedProfileMcpPath(profile.mcpConfigPath) ? '' : (profile.mcpConfigPath || ''),
       model: profile.model || '',
     });
     const apiKey = await commands.loadApiKey(profileId).catch(() => null);
@@ -493,13 +499,25 @@ function EmptyPanePicker({
     setApiKeyStatus(status?.message || (apiKey ? t('profile.api_key_saved' as any) : t('profile.api_key_missing' as any)));
   };
 
+  const setAllMcpSelected = (selected: boolean) => {
+    if (!draftProfile) return;
+    setDraftProfile({
+      ...draftProfile,
+      selectedMcpIds: selected ? mcpOptions.map((mcp) => mcp.id) : [],
+    });
+  };
+
+  const setAllSkillsSelected = (selected: boolean) => {
+    if (!draftProfile) return;
+    setDraftProfile({
+      ...draftProfile,
+      skills: selected ? skillOptions.map((skill) => skill.id) : [],
+    });
+  };
+
   const saveProfile = async () => {
     if (!profilesCfg || !draftProfile || !draftProfileId.trim()) return;
     const id = draftProfileId.trim();
-    let effectiveMcpConfigPath = draftProfile.mcpConfigPath || '';
-    if (draftProfile.selectedMcpIds && draftProfile.selectedMcpIds.length > 0) {
-      effectiveMcpConfigPath = await commands.buildTempMcpConfig(draftProfile.selectedMcpIds);
-    }
     const next: MultiAgentProfilesConfig = {
       ...profilesCfg,
       profiles: {
@@ -507,7 +525,7 @@ function EmptyPanePicker({
         [id]: {
           ...draftProfile,
           tool: String(profileTool || draftProfile.tool),
-          mcpConfigPath: effectiveMcpConfigPath,
+          mcpConfigPath: draftProfile.mcpConfigPath || '',
         },
       },
     };
@@ -698,7 +716,13 @@ function EmptyPanePicker({
                 <div className="empty-pane-profile-section-body empty-pane-profile-section-body--scroll">
                   <div className="empty-pane-profile-advanced-grid">
                     <div className="empty-pane-profile-picklist empty-pane-profile-picklist--tall">
-                      <div className="empty-pane-profile-picklist-title">MCP</div>
+                      <div className="empty-pane-profile-picklist-head">
+                        <div className="empty-pane-profile-picklist-title">MCP</div>
+                        <div className="empty-pane-profile-picklist-actions">
+                          <button type="button" onClick={() => setAllMcpSelected(true)}>{t('profile.select_all' as any)}</button>
+                          <button type="button" onClick={() => setAllMcpSelected(false)}>{t('profile.clear_all' as any)}</button>
+                        </div>
+                      </div>
                       <input type="text" className="empty-pane-history-search" value={draftProfile.mcpConfigPath} placeholder={t('profile.mcp_config_path' as any)} onChange={(e) => setDraftProfile({ ...draftProfile, mcpConfigPath: e.target.value })} />
                       <div className="empty-pane-profile-pills empty-pane-profile-pills--scroll">
                         {mcpOptions.map((mcp) => {
@@ -726,7 +750,13 @@ function EmptyPanePicker({
                     </div>
 
                     <div className="empty-pane-profile-picklist empty-pane-profile-picklist--tall">
-                      <div className="empty-pane-profile-picklist-title">{t('profile.skills' as any)}</div>
+                      <div className="empty-pane-profile-picklist-head">
+                        <div className="empty-pane-profile-picklist-title">{t('profile.skills' as any)}</div>
+                        <div className="empty-pane-profile-picklist-actions">
+                          <button type="button" onClick={() => setAllSkillsSelected(true)}>{t('profile.select_all' as any)}</button>
+                          <button type="button" onClick={() => setAllSkillsSelected(false)}>{t('profile.clear_all' as any)}</button>
+                        </div>
+                      </div>
                       <div className="empty-pane-profile-pills empty-pane-profile-pills--scroll">
                         {skillOptions.map((skill) => {
                           const checked = (draftProfile.skills || []).includes(skill.id);

@@ -158,18 +158,14 @@ pub fn prepare_pane_config_dir(
                     url = endpoint.url
                 ),
             ];
-            out.codex_extra_args
-                .extend(codex_extra_mcp_args(&extra_mcp_servers));
             out.codex_extra_args.push("-c".to_string());
             out.codex_extra_args.push(format!(
                 "model_instructions_file='{path}'",
                 path = inst.display()
             ));
-            if !extra_mcp_servers.is_empty() {
-                let codex_home = dir.join("codex-home");
-                prepare_isolated_codex_home(&codex_home, &extra_mcp_servers)?;
-                out.codex_home_path = Some(codex_home);
-            }
+            let codex_home = dir.join("codex-home");
+            prepare_isolated_codex_home(&codex_home, &extra_mcp_servers)?;
+            out.codex_home_path = Some(codex_home);
         }
         "gemini" => {
             let sanitized = sanitize_pane_id(pane_id);
@@ -234,9 +230,41 @@ pub fn prepare_pane_config_dir(
     Ok(out)
 }
 
-fn codex_extra_mcp_args(extra: &Map<String, Value>) -> Vec<String> {
-    let mut out = Vec::new();
-    for (server_name, raw_value) in extra {
+fn prepare_isolated_codex_home(
+    target_home: &PathBuf,
+    extra_mcp_servers: &Map<String, Value>,
+) -> std::io::Result<()> {
+    if target_home.exists() {
+        let _ = fs::remove_dir_all(target_home);
+    }
+    fs::create_dir_all(target_home)?;
+
+    let mut root = toml::Value::Table(toml::map::Map::new());
+
+    if let Some(src_home) = dirs::home_dir().map(|h| h.join(".codex")) {
+        copy_if_exists(&src_home.join("auth.json"), &target_home.join("auth.json"))?;
+        copy_if_exists(&src_home.join("AGENTS.md"), &target_home.join("AGENTS.md"))?;
+        copy_dir_if_exists(&src_home.join("skills"), &target_home.join("skills"))?;
+        copy_dir_if_exists(&src_home.join("prompts"), &target_home.join("prompts"))?;
+        copy_dir_if_exists(&src_home.join("rules"), &target_home.join("rules"))?;
+
+        root = if let Ok(body) = fs::read_to_string(src_home.join("config.toml")) {
+            toml::from_str::<toml::Value>(&body)
+                .unwrap_or_else(|_| toml::Value::Table(toml::map::Map::new()))
+        } else {
+            toml::Value::Table(toml::map::Map::new())
+        };
+    }
+
+    if !root.is_table() {
+        root = toml::Value::Table(toml::map::Map::new());
+    }
+
+    let table = root.as_table_mut().unwrap();
+    table.remove("mcp_servers");
+
+    let mut mcp_table = toml::map::Map::new();
+    for (server_name, raw_value) in extra_mcp_servers {
         if server_name == MCP_KEY {
             continue;
         }
@@ -254,73 +282,14 @@ fn codex_extra_mcp_args(extra: &Map<String, Value>) -> Vec<String> {
                 obj.insert("url".to_string(), http_url);
             }
         }
-        flatten_codex_value(
-            &format!("mcp_servers.{}", server_name),
-            &normalized,
-            &mut out,
-        );
+        mcp_table.insert(server_name.clone(), json_to_toml_value(&normalized));
     }
-    out
-}
+    table.insert("mcp_servers".to_string(), toml::Value::Table(mcp_table));
 
-fn prepare_isolated_codex_home(
-    target_home: &PathBuf,
-    extra_mcp_servers: &Map<String, Value>,
-) -> std::io::Result<()> {
-    if target_home.exists() {
-        let _ = fs::remove_dir_all(target_home);
-    }
-    fs::create_dir_all(target_home)?;
-
-    if let Some(src_home) = dirs::home_dir().map(|h| h.join(".codex")) {
-        copy_if_exists(&src_home.join("auth.json"), &target_home.join("auth.json"))?;
-        copy_if_exists(&src_home.join("AGENTS.md"), &target_home.join("AGENTS.md"))?;
-        copy_dir_if_exists(&src_home.join("skills"), &target_home.join("skills"))?;
-        copy_dir_if_exists(&src_home.join("prompts"), &target_home.join("prompts"))?;
-        copy_dir_if_exists(&src_home.join("rules"), &target_home.join("rules"))?;
-
-        let mut root = if let Ok(body) = fs::read_to_string(src_home.join("config.toml")) {
-            toml::from_str::<toml::Value>(&body)
-                .unwrap_or_else(|_| toml::Value::Table(toml::map::Map::new()))
-        } else {
-            toml::Value::Table(toml::map::Map::new())
-        };
-
-        if !root.is_table() {
-            root = toml::Value::Table(toml::map::Map::new());
-        }
-
-        let table = root.as_table_mut().unwrap();
-        table.remove("mcp_servers");
-
-        let mut mcp_table = toml::map::Map::new();
-        for (server_name, raw_value) in extra_mcp_servers {
-            if server_name == MCP_KEY {
-                continue;
-            }
-            let mut normalized = raw_value.clone();
-            if let Some(obj) = normalized.as_object_mut() {
-                let has_type = obj.contains_key("type");
-                let has_command = obj.contains_key("command");
-                let has_url = obj.contains_key("url") || obj.contains_key("httpUrl");
-                if !has_type && has_command {
-                    obj.insert("type".to_string(), Value::String("stdio".to_string()));
-                } else if !has_type && has_url {
-                    obj.insert("type".to_string(), Value::String("http".to_string()));
-                }
-                if let Some(http_url) = obj.remove("httpUrl") {
-                    obj.insert("url".to_string(), http_url);
-                }
-            }
-            mcp_table.insert(server_name.clone(), json_to_toml_value(&normalized));
-        }
-        table.insert("mcp_servers".to_string(), toml::Value::Table(mcp_table));
-
-        fs::write(
-            target_home.join("config.toml"),
-            toml::to_string_pretty(&root).unwrap_or_default(),
-        )?;
-    }
+    fs::write(
+        target_home.join("config.toml"),
+        toml::to_string_pretty(&root).unwrap_or_default(),
+    )?;
     Ok(())
 }
 
@@ -378,38 +347,6 @@ fn copy_dir_if_exists(src: &PathBuf, dst: &PathBuf) -> std::io::Result<()> {
         }
     }
     Ok(())
-}
-
-fn flatten_codex_value(prefix: &str, value: &Value, out: &mut Vec<String>) {
-    match value {
-        Value::Object(map) => {
-            for (k, v) in map {
-                flatten_codex_value(&format!("{prefix}.{k}"), v, out);
-            }
-        }
-        _ => {
-            out.push("-c".to_string());
-            out.push(format!("{prefix}={}", codex_toml_value(value)));
-        }
-    }
-}
-
-fn codex_toml_value(value: &Value) -> String {
-    match value {
-        Value::Null => "''".to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Number(n) => n.to_string(),
-        Value::String(s) => format!("'{}'", s.replace('\'', "''")),
-        Value::Array(arr) => {
-            let items = arr
-                .iter()
-                .map(codex_toml_value)
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("[{items}]")
-        }
-        Value::Object(_) => "{}".to_string(),
-    }
 }
 
 /// Wipe per-pane artifacts from any previous Coffee CLI run:
@@ -570,18 +507,43 @@ mod tests {
         let out = prepare_pane_config_dir(&pid, "codex", &ep(), "PROTOCOL BODY", None).unwrap();
         assert!(out.claude_mcp_config_path.is_none());
         assert!(out.gemini_extension_name.is_none());
+        let codex_home = out.codex_home_path.expect("codex returns isolated home");
         assert_eq!(out.codex_extra_args.len(), 4);
         assert_eq!(out.codex_extra_args[0], "-c");
         assert!(out.codex_extra_args[1].contains("mcp_servers.coffee-cli.url"));
         assert!(out.codex_extra_args[1].contains("http://127.0.0.1:50000/mcp"));
         assert_eq!(out.codex_extra_args[2], "-c");
         assert!(out.codex_extra_args[3].contains("model_instructions_file"));
+        let codex_config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+        assert!(codex_config.contains("[mcp_servers]"));
         // Protocol text actually got written.
         let inst_path = panes_root()
             .join(sanitize_pane_id(&pid))
             .join("instructions.md");
         let body = fs::read_to_string(&inst_path).unwrap();
         assert_eq!(body, "PROTOCOL BODY");
+        let _ = fs::remove_dir_all(panes_root().join(sanitize_pane_id(&pid)));
+    }
+
+    #[test]
+    fn codex_isolated_home_contains_only_extra_mcp_servers() {
+        let pid = unique_pane("codex-extra");
+        let mut extra = Map::new();
+        extra.insert(
+            "selected-only".to_string(),
+            serde_json::json!({
+                "command": "selected-mcp",
+                "args": ["--stdio"]
+            }),
+        );
+        let out =
+            prepare_pane_config_dir(&pid, "codex", &ep(), "PROTOCOL BODY", Some(extra)).unwrap();
+        let codex_home = out.codex_home_path.expect("codex returns isolated home");
+        let codex_config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+        assert!(codex_config.contains("[mcp_servers.selected-only]"));
+        assert!(codex_config.contains("command = \"selected-mcp\""));
+        assert!(!codex_config.contains("[mcp_servers.ida]"));
+        assert!(!codex_config.contains("[mcp_servers.coffee-cli]"));
         let _ = fs::remove_dir_all(panes_root().join(sanitize_pane_id(&pid)));
     }
 

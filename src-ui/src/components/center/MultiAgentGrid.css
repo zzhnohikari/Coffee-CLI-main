@@ -584,6 +584,39 @@
   color: var(--text-2, #b5b0aa);
 }
 
+.empty-pane-profile-picklist-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 28px;
+}
+
+.empty-pane-profile-picklist-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.empty-pane-profile-picklist-actions button {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--accent, #6cc275) 20%, transparent);
+  background: color-mix(in srgb, var(--bg-app, #161514) 84%, transparent);
+  color: var(--text-2, #b5b0aa);
+  border-radius: 7px;
+  padding: 5px 8px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.empty-pane-profile-picklist-actions button:hover {
+  border-color: color-mix(in srgb, var(--accent, #6cc275) 48%, transparent);
+  color: var(--text-1, #e9e9ea);
+  background: color-mix(in srgb, var(--accent, #6cc275) 10%, transparent);
+}
+
 .empty-pane-profile-pills {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));

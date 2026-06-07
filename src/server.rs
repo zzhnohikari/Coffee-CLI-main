@@ -1,6 +1,7 @@
 use crate::terminal;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
@@ -866,7 +867,7 @@ async fn tier_terminal_start(
         .unwrap_or_default();
     let extra_mcp_servers = pane_launch_payload
         .as_ref()
-        .map(|p| crate::multi_agent_profiles::load_extra_mcp_servers(&p.mcp_config_path))
+        .map(load_profile_mcp_servers)
         .unwrap_or_default();
     {
         let in_multi_agent = session_id.contains("::pane-");
@@ -3831,6 +3832,71 @@ pub fn discover_local_mcp_servers() -> Result<Vec<McpOption>, String> {
     out.sort_by_key(|a| a.label.to_lowercase());
     out.dedup_by(|a, b| a.id == b.id);
     Ok(out)
+}
+
+fn load_selected_mcp_servers(
+    selected_ids: &[String],
+) -> serde_json::Map<String, serde_json::Value> {
+    let selected: HashSet<String> = selected_ids
+        .iter()
+        .map(|id| id.trim())
+        .filter(|id| !id.is_empty())
+        .map(ToString::to_string)
+        .collect();
+    if selected.is_empty() {
+        return serde_json::Map::new();
+    }
+
+    let Ok(all) = discover_local_mcp_servers() else {
+        log::warn!("[multi-agent profiles] could not discover local MCP servers");
+        return serde_json::Map::new();
+    };
+
+    let mut out = serde_json::Map::new();
+    for opt in all {
+        if !selected.contains(&opt.id) {
+            continue;
+        }
+        match serde_json::from_str::<serde_json::Value>(&opt.config_json) {
+            Ok(value) => {
+                out.insert(opt.id, value);
+            }
+            Err(e) => {
+                log::warn!(
+                    "[multi-agent profiles] ignoring invalid MCP config for '{}': {}",
+                    opt.id,
+                    e
+                );
+            }
+        }
+    }
+    out
+}
+
+fn is_generated_profile_mcp_path(path_str: &str) -> bool {
+    let trimmed = path_str.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let path = crate::tool_config::expand_path(trimmed);
+    let generated_root = std::env::temp_dir().join("coffee-cli").join("profile-mcp");
+    path.starts_with(generated_root)
+}
+
+fn load_profile_mcp_servers(
+    payload: &crate::multi_agent_profiles::PaneLaunchPayload,
+) -> serde_json::Map<String, serde_json::Value> {
+    if !payload.selected_mcp_ids.is_empty() {
+        return load_selected_mcp_servers(&payload.selected_mcp_ids);
+    }
+
+    if payload.mcp_config_path.trim().is_empty()
+        || is_generated_profile_mcp_path(&payload.mcp_config_path)
+    {
+        return serde_json::Map::new();
+    }
+
+    crate::multi_agent_profiles::load_extra_mcp_servers(&payload.mcp_config_path)
 }
 
 #[tauri::command]
