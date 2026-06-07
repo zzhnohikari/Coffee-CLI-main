@@ -21,11 +21,70 @@ fn merge_prompt_sections(base: &str, extra: &str) -> String {
 fn log_spawn_isolation_env(extra_env: &[(String, String)]) {
     let filtered: Vec<String> = extra_env
         .iter()
-        .filter(|(k, _)| matches!(k.as_str(), "CODEX_HOME" | "OPENCODE_CONFIG"))
+        .filter(|(k, _)| {
+            matches!(
+                k.as_str(),
+                "HOME" | "CODEX_HOME" | "COFFEE_REAL_CWD" | "OPENCODE_CONFIG"
+            )
+        })
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
     if !filtered.is_empty() {
         eprintln!("[Tier Terminal] Isolation env: {:?}", filtered);
+    }
+}
+
+fn codex_workspace_prompt(real_cwd: &str) -> String {
+    if real_cwd.trim().is_empty() {
+        return String::new();
+    }
+    format!(
+        "## Coffee CLI workspace\n\
+This Codex pane starts from an isolated temporary directory so profile MCP and skills settings do not inherit the user's global `.codex` configuration.\n\
+The user's intended working directory is `{real_cwd}`.\n\
+When operating on user files, first `cd {real_cwd}` or use absolute paths. The isolated start directory also contains a `workspace` symlink pointing to that directory."
+    )
+}
+
+fn frontend_or_home_cwd(cwd: &Option<String>) -> String {
+    cwd.as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| dirs::home_dir().map(|p| p.to_string_lossy().to_string()))
+        .unwrap_or_default()
+}
+
+fn prepare_codex_workspace_link(process_home: &Path, real_cwd: &str) {
+    if real_cwd.trim().is_empty() {
+        return;
+    }
+    let link_path = process_home.join("workspace");
+    let _ = std::fs::remove_file(&link_path);
+    let _ = std::fs::remove_dir_all(&link_path);
+
+    #[cfg(unix)]
+    {
+        if let Err(e) = std::os::unix::fs::symlink(real_cwd, &link_path) {
+            log::warn!(
+                "[mcp] failed to create Codex workspace symlink {} -> {}: {}",
+                link_path.display(),
+                real_cwd,
+                e
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        if let Err(e) = std::os::windows::fs::symlink_dir(real_cwd, &link_path) {
+            log::warn!(
+                "[mcp] failed to create Codex workspace symlink {} -> {}: {}",
+                link_path.display(),
+                real_cwd,
+                e
+            );
+        }
     }
 }
 
@@ -864,8 +923,8 @@ async fn tier_terminal_start(
     // `list_panes()` marks `is_self: true` on the matching row, and
     // dispatched text auto-prefixes with `[From <pane>]`. No global
     // config injection, no workspace files written. Codex gets a scoped
-    // CODEX_HOME so empty profiles do not inherit the user's global Codex
-    // config, while auth.json is copied into that scoped home.
+    // HOME + CODEX_HOME so empty profiles do not inherit the user's global
+    // Codex config, while auth.json is copied into that scoped home.
     //
     // For other tools (qwen, hermes, openclaw, opencode, …) this stays
     // a no-op — their multi-agent participation is just "be a regular
@@ -885,6 +944,7 @@ async fn tier_terminal_start(
         .as_ref()
         .map(|payload| payload.skills.clone())
         .unwrap_or_default();
+    let intended_cwd = frontend_or_home_cwd(&cwd);
     {
         let in_multi_agent = session_id.contains("::pane-");
         // Sentinel Protocol gates peer-awareness wiring — without it, panes
@@ -918,6 +978,11 @@ coffee-cli MCP tools (whoami/list_panes/send_to_pane/read_pane/...) will NOT be 
         if let Some(kind) = pane_cli_kind {
             let endpoint = ensure_pane_mcp_running(&app, &state, &session_id).await?;
             let protocol = crate::multi_agent_protocol::build_pane_system_prompt(&session_id);
+            let protocol = if kind == "codex" {
+                merge_prompt_sections(&protocol, &codex_workspace_prompt(&intended_cwd))
+            } else {
+                protocol
+            };
             match crate::mcp_injector::prepare_pane_config_dir(
                 &session_id,
                 kind,
@@ -1323,18 +1388,28 @@ fn tier_terminal_start_blocking(
     // Determine the CWD to pass to the Agent:
     // 1. If workspace has an explicit dir (from open-folder or resume) → use it
     // 2. Otherwise default to user's home dir (matches most agents' default)
-    let spawn_cwd = if dir.as_os_str().is_empty() || !dir.is_dir() {
+    let real_spawn_cwd = if dir.as_os_str().is_empty() || !dir.is_dir() {
         dirs::home_dir().map(|p| p.to_string_lossy().to_string())
     } else {
         Some(dir.to_string_lossy().to_string())
     };
+    let mut process_spawn_cwd = real_spawn_cwd.clone();
+    if let Some(process_home) = pane_paths
+        .as_ref()
+        .and_then(|pp| pp.codex_process_home_path.as_ref())
+    {
+        if let Some(real_cwd) = real_spawn_cwd.as_deref() {
+            prepare_codex_workspace_link(process_home, real_cwd);
+        }
+        process_spawn_cwd = Some(process_home.to_string_lossy().to_string());
+    }
 
     let tool_name = tool.clone();
-    let actual_cwd = spawn_cwd.clone().unwrap_or_default();
+    let actual_cwd = real_spawn_cwd.clone().unwrap_or_default();
 
     eprintln!(
-        "[Tier Terminal] Starting tool={:?}, cmd={}, args={:?}, cwd={:?}",
-        tool, cmd, args, spawn_cwd
+        "[Tier Terminal] Starting tool={:?}, cmd={}, args={:?}, cwd={:?}, real_cwd={:?}",
+        tool, cmd, args, process_spawn_cwd, real_spawn_cwd
     );
 
     // Per-pane env overrides. User/profile env lands first; Coffee's own
@@ -1376,6 +1451,15 @@ fn tier_terminal_start_blocking(
     }
     if let Some(p) = pane_paths
         .as_ref()
+        .and_then(|pp| pp.codex_process_home_path.as_ref())
+    {
+        extra_env.push(("HOME".to_string(), p.display().to_string()));
+        if let Some(real_cwd) = real_spawn_cwd.as_deref() {
+            extra_env.push(("COFFEE_REAL_CWD".to_string(), real_cwd.to_string()));
+        }
+    }
+    if let Some(p) = pane_paths
+        .as_ref()
         .and_then(|pp| pp.codex_home_path.as_ref())
     {
         extra_env.push(("CODEX_HOME".to_string(), p.display().to_string()));
@@ -1388,7 +1472,7 @@ fn tier_terminal_start_blocking(
         terminal_session.clone(),
         cmd,
         args,
-        spawn_cwd,
+        process_spawn_cwd,
         locale.clone().unwrap_or_else(|| "en".to_string()),
         cols,
         rows,
@@ -3083,6 +3167,11 @@ fn tier_terminal_resume(
             &saved_session_id,
         ))?;
         let protocol = crate::multi_agent_protocol::build_pane_system_prompt(&saved_session_id);
+        let protocol = if tool == "codex" {
+            merge_prompt_sections(&protocol, &codex_workspace_prompt(&cwd))
+        } else {
+            protocol
+        };
         Some(
             crate::mcp_injector::prepare_pane_config_dir(
                 &saved_session_id,
@@ -3163,11 +3252,25 @@ fn tier_terminal_resume(
     }
     if let Some(p) = pane_paths
         .as_ref()
+        .and_then(|pp| pp.codex_process_home_path.as_ref())
+    {
+        prepare_codex_workspace_link(p, &cwd);
+        extra_env.push(("HOME".to_string(), p.display().to_string()));
+        extra_env.push(("COFFEE_REAL_CWD".to_string(), cwd.clone()));
+    }
+    if let Some(p) = pane_paths
+        .as_ref()
         .and_then(|pp| pp.codex_home_path.as_ref())
     {
         extra_env.push(("CODEX_HOME".to_string(), p.display().to_string()));
     }
     log_spawn_isolation_env(&extra_env);
+
+    let process_cwd = pane_paths
+        .as_ref()
+        .and_then(|pp| pp.codex_process_home_path.as_ref())
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| cwd.clone());
 
     let actual_cwd = cwd.clone();
     let emit_session_id = saved_session_id.clone();
@@ -3178,7 +3281,7 @@ fn tier_terminal_resume(
         state.terminal_session.clone(),
         program,
         args,
-        Some(cwd),
+        Some(process_cwd),
         "en".to_string(),
         cols,
         rows,
@@ -4206,8 +4309,8 @@ pub async fn ensure_pane_mcp_running(
 /// / Gemini extension stub) are all created lazily inside
 /// `tier_terminal_start` when each pane spawns its CLI. No workspace
 /// files are written, no global `~/.codex` / `~/.gemini` `mcp_servers`
-/// blocks get injected. Codex panes use an isolated `CODEX_HOME` with
-/// copied auth, so profile config stays scoped without breaking login.
+/// blocks get injected. Codex panes use an isolated `HOME` + `CODEX_HOME`
+/// with copied auth, so profile config stays scoped without breaking login.
 ///
 /// The frontend still calls this on tab mount as a structured place
 /// for cross-cutting validation (workspace must exist, future license

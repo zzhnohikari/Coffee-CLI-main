@@ -38,11 +38,12 @@
 //! never accumulate even across crashes (boot-time prune is the
 //! belt-and-suspenders catch-all).
 //!
-//! Auth safety: Codex panes get an isolated `CODEX_HOME` populated only
-//! with `auth.json`, profile-selected skills, and profile-selected MCP
-//! servers. This prevents empty profiles from inheriting the user's global
-//! Codex config, AGENTS.md, prompts, rules, skills, or MCP servers. Gemini
-//! extension `mcpServers` still merge into the user's existing MCP set.
+//! Auth safety: Codex panes get an isolated process `HOME` whose `.codex`
+//! directory is populated only with `auth.json`, profile-selected skills,
+//! and profile-selected MCP servers. This prevents empty profiles from
+//! inheriting the user's global Codex config, AGENTS.md, prompts, rules,
+//! skills, or MCP servers. Gemini extension `mcpServers` still merge into
+//! the user's existing MCP set.
 //!
 //! Lifecycle: `prune_pane_artifacts()` is called once at app start so
 //! the previous run's leftover dirs go away, again at shutdown for
@@ -83,9 +84,14 @@ pub struct PaneConfigPaths {
     /// `cli_kind == "codex"` only. Caller appends these straight onto
     /// the codex argv (already in `-c key=value` pairs, ready to spawn).
     pub codex_extra_args: Vec<String>,
-    /// `cli_kind == "codex"` only when profile-selected MCPs require
-    /// full isolation from the user's global `~/.codex/config.toml`.
-    /// When present, pass via `CODEX_HOME=<path>` env var.
+    /// `cli_kind == "codex"` only. Private HOME used because Codex TUI
+    /// still reads `~/.codex/config.toml` for MCP startup even when the
+    /// `codex mcp` subcommand honors `CODEX_HOME`.
+    pub codex_process_home_path: Option<PathBuf>,
+    /// `cli_kind == "codex"` only. Points at
+    /// `<codex_process_home_path>/.codex` and should also be passed via
+    /// `CODEX_HOME=<path>` for subcommands / future Codex versions that
+    /// honor it.
     pub codex_home_path: Option<PathBuf>,
     /// `cli_kind == "gemini"` only. Pass via `--extensions <name>`. The
     /// stub dir at `~/.gemini/extensions/<name>/` has been created with
@@ -167,8 +173,10 @@ pub fn prepare_pane_config_dir(
                 "model_instructions_file='{path}'",
                 path = inst.display()
             ));
-            let codex_home = dir.join("codex-home");
+            let codex_process_home = dir.join("codex-home");
+            let codex_home = codex_process_home.join(".codex");
             prepare_isolated_codex_home(&codex_home, &extra_mcp_servers, selected_skills)?;
+            out.codex_process_home_path = Some(codex_process_home);
             out.codex_home_path = Some(codex_home);
         }
         "gemini" => {
