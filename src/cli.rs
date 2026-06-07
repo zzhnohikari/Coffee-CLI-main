@@ -82,7 +82,11 @@ pub fn mcp_status() -> Result<()> {
     println!(
         "  PID            {}  ({})",
         manifest.pid,
-        if pid_alive { "alive" } else { "DEAD — manifest is stale" }
+        if pid_alive {
+            "alive"
+        } else {
+            "DEAD — manifest is stale"
+        }
     );
     println!(
         "  Manifest age   {}s  ({})",
@@ -150,9 +154,7 @@ fn is_process_alive(pid: u32) -> bool {
 #[cfg(target_family = "windows")]
 fn is_process_alive(pid: u32) -> bool {
     use windows::Win32::Foundation::{CloseHandle, FALSE};
-    use windows::Win32::System::Threading::{
-        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
     unsafe {
         match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid) {
             Ok(h) if !h.is_invalid() => {

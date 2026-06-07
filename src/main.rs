@@ -1,16 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod cli;
-mod terminal;
-mod server;
-mod hook_server;
-mod hook_installer;
-mod fs_watcher;
-mod mcp_server;
-mod mcp_injector;
-mod multi_agent_protocol;
-mod multi_agent_profiles;
 mod agent_mcp_config;
+mod cli;
+mod fs_watcher;
+mod hook_installer;
+mod hook_server;
+mod mcp_injector;
+mod mcp_server;
+mod multi_agent_profiles;
+mod multi_agent_protocol;
+mod server;
+mod terminal;
 mod tool_config;
 
 use anyhow::Result;
@@ -119,9 +119,7 @@ fn main() -> Result<()> {
 /// No-op on Unix and on debug builds.
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
 fn attach_terminal_console() {
-    use windows::Win32::System::Console::{
-        AttachConsole, ATTACH_PARENT_PROCESS,
-    };
+    use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
     unsafe {
         // Best-effort: if the parent has no console (e.g. invoked
         // from explorer double-click), AttachConsole returns FALSE

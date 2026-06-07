@@ -40,7 +40,7 @@ const MCP_NAME: &str = "coffee-cli";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RegistrationReport {
-    pub agent: String,        // currently always "openclaw"
+    pub agent: String, // currently always "openclaw"
     pub ok: bool,
     pub path: Option<String>,
     /// Human-readable outcome / error. Messages prefixed with
@@ -98,10 +98,8 @@ fn register_with_openclaw_at(path: &PathBuf, url: &str) -> RegistrationReport {
                 .get("mcp")
                 .and_then(|m| m.get("servers"))
                 .and_then(|s| s.get(MCP_NAME));
-            let url_matches = entry
-                .and_then(|e| e.get("url"))
-                .and_then(|u| u.as_str())
-                == Some(url);
+            let url_matches =
+                entry.and_then(|e| e.get("url")).and_then(|u| u.as_str()) == Some(url);
             let transport_matches = entry
                 .and_then(|e| e.get("transport"))
                 .and_then(|t| t.as_str())

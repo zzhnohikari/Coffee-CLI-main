@@ -109,7 +109,9 @@ struct RawShellSendExecution {
     text: String,
 }
 
-fn shell_task_ledger() -> &'static Mutex<std::collections::HashMap<String, std::collections::VecDeque<ShellTaskLedgerEntry>>> {
+fn shell_task_ledger() -> &'static Mutex<
+    std::collections::HashMap<String, std::collections::VecDeque<ShellTaskLedgerEntry>>,
+> {
     static LEDGER: OnceLock<
         Mutex<std::collections::HashMap<String, std::collections::VecDeque<ShellTaskLedgerEntry>>>,
     > = OnceLock::new();
@@ -136,10 +138,7 @@ fn record_shell_task_ledger_entry(target_full_id: &str, entry: ShellTaskLedgerEn
     }
 }
 
-fn read_shell_task_ledger_entries(
-    target_full_id: &str,
-    limit: usize,
-) -> Vec<ShellTaskLedgerEntry> {
+fn read_shell_task_ledger_entries(target_full_id: &str, limit: usize) -> Vec<ShellTaskLedgerEntry> {
     let Ok(map) = shell_task_ledger().lock() else {
         return Vec::new();
     };
@@ -186,9 +185,18 @@ fn build_shell_task_wrapper(begin_marker: &str, end_marker: &str, user_text: &st
         .collect::<Vec<_>>()
         .join("\n");
     if body.is_empty() {
-        format!("echo {begin}; echo {end}", begin = begin_marker, end = end_marker)
+        format!(
+            "echo {begin}; echo {end}",
+            begin = begin_marker,
+            end = end_marker
+        )
     } else {
-        format!("echo {begin}\n{body}\necho {end}", begin = begin_marker, end = end_marker, body = body)
+        format!(
+            "echo {begin}\n{body}\necho {end}",
+            begin = begin_marker,
+            end = end_marker,
+            body = body
+        )
     }
 }
 
@@ -1392,8 +1400,7 @@ impl CoffeeMcp {
                 collected.push_str(&delta);
             }
 
-            if let Some(between) = extract_between_markers(&collected, &begin_marker, &end_marker)
-            {
+            if let Some(between) = extract_between_markers(&collected, &begin_marker, &end_marker) {
                 output = between;
                 markers_found = true;
                 status = "completed".to_string();
@@ -1435,7 +1442,10 @@ impl CoffeeMcp {
             let self_tab = tab_prefix(self_id);
             let target_tab = tab_prefix(target_id);
             if self_tab != target_tab {
-                return Err("target pane belongs to a different Tab; cross-Tab dispatch is not supported".to_string());
+                return Err(
+                    "target pane belongs to a different Tab; cross-Tab dispatch is not supported"
+                        .to_string(),
+                );
             }
         }
 
@@ -1457,12 +1467,9 @@ impl CoffeeMcp {
             build_shell_wrapper(&dispatcher_short, &target_short, &task_id, text)
         } else {
             match &self.self_pane_id {
-                Some(self_id) => format!(
-                    "[From {} | Task {}] {}",
-                    pane_short(self_id),
-                    task_id,
-                    text
-                ),
+                Some(self_id) => {
+                    format!("[From {} | Task {}] {}", pane_short(self_id), task_id, text)
+                }
                 None => text.to_string(),
             }
         };
@@ -1614,7 +1621,12 @@ impl CoffeeMcp {
             .await
             .unwrap_or_else(|_| (String::new(), start_cursor, false));
         Ok(RawShellSendExecution {
-            status: if result.waited { "completed" } else { "submitted" }.to_string(),
+            status: if result.waited {
+                "completed"
+            } else {
+                "submitted"
+            }
+            .to_string(),
             pane_id: pane_short(target_id),
             cursor: start_cursor,
             next_cursor,
@@ -1819,14 +1831,17 @@ in any tab.")]
         }
     }
 
-    #[tool(description = "Dispatch a batch of independent tasks to multiple panes in one manager turn. Use this when subtasks can proceed in parallel. The batch is fire-and-forget: all tasks are submitted immediately, each gets its own task_id, and results return later through the normal RESULT/DONE wake-up path.")]
+    #[tool(
+        description = "Dispatch a batch of independent tasks to multiple panes in one manager turn. Use this when subtasks can proceed in parallel. The batch is fire-and-forget: all tasks are submitted immediately, each gets its own task_id, and results return later through the normal RESULT/DONE wake-up path."
+    )]
     async fn dispatch_task_batch(
         &self,
         Parameters(args): Parameters<DispatchTaskBatchArgs>,
     ) -> Result<CallToolResult, McpError> {
         if args.tasks.is_empty() {
             return Ok(CallToolResult::success(vec![Content::text(
-                serde_json::json!({ "status": "failed", "error": "tasks cannot be empty" }).to_string(),
+                serde_json::json!({ "status": "failed", "error": "tasks cannot be empty" })
+                    .to_string(),
             )]));
         }
         let batch_id = uuid::Uuid::new_v4().to_string();
@@ -1872,7 +1887,9 @@ in any tab.")]
         )]))
     }
 
-    #[tool(description = "Wait for a batch of dispatched tasks to settle. You can watch either a batch_id returned by dispatch_task_batch or an explicit list of task_ids. Returns as soon as every tracked task is completed / wake_failed, or when timeout is hit.")]
+    #[tool(
+        description = "Wait for a batch of dispatched tasks to settle. You can watch either a batch_id returned by dispatch_task_batch or an explicit list of task_ids. Returns as soon as every tracked task is completed / wake_failed, or when timeout is hit."
+    )]
     async fn wait_tasks(
         &self,
         Parameters(args): Parameters<WaitTasksArgs>,
@@ -1939,7 +1956,9 @@ in any tab.")]
         }
     }
 
-    #[tool(description = "Summarize active / completed dispatched tasks for the caller's tab. Useful for managers and observers to inspect a batch without rereading pane output.")]
+    #[tool(
+        description = "Summarize active / completed dispatched tasks for the caller's tab. Useful for managers and observers to inspect a batch without rereading pane output."
+    )]
     async fn summarize_active_tasks(
         &self,
         Parameters(args): Parameters<SummarizeActiveTasksArgs>,
@@ -1992,9 +2011,11 @@ in any tab.")]
         )]))
     }
 
-    #[tool(description = "Dispatch a shell task to a shell/terminal pane using automatic begin/end markers. \
+    #[tool(
+        description = "Dispatch a shell task to a shell/terminal pane using automatic begin/end markers. \
 Use this instead of send_to_pane when the target hosts PowerShell, bash, SSH, nc, reverse shells, or interactive shell tooling. \
-Coffee wraps the command with unique markers, waits for the end marker, and returns only the text between the markers.")]
+Coffee wraps the command with unique markers, waits for the end marker, and returns only the text between the markers."
+    )]
     async fn send_shell_task(
         &self,
         Parameters(args): Parameters<SendShellTaskArgs>,
@@ -2086,9 +2107,11 @@ Returns plain text plus an is_idle flag. Default result mode extracts the latest
         }
     }
 
-    #[tool(description = "Read only the output produced after a given incremental cursor. \
+    #[tool(
+        description = "Read only the output produced after a given incremental cursor. \
 Useful for shell/interactive workflows where you want to avoid rereading old pane output. \
-Returns the new cursor plus the delta text since the supplied cursor.")]
+Returns the new cursor plus the delta text since the supplied cursor."
+    )]
     async fn read_pane_delta(
         &self,
         Parameters(args): Parameters<ReadPaneDeltaArgs>,
@@ -2120,8 +2143,10 @@ Returns the new cursor plus the delta text since the supplied cursor.")]
         }
     }
 
-    #[tool(description = "Wait until a pane's output matches a substring or regex. \
-Useful for interactive shell workflows such as waiting for prompts, menu text, nc listeners, reverse shells, or known end markers.")]
+    #[tool(
+        description = "Wait until a pane's output matches a substring or regex. \
+Useful for interactive shell workflows such as waiting for prompts, menu text, nc listeners, reverse shells, or known end markers."
+    )]
     async fn expect_pane(
         &self,
         Parameters(args): Parameters<ExpectPaneArgs>,
@@ -2136,7 +2161,10 @@ Useful for interactive shell workflows such as waiting for prompts, menu text, n
                         kind: "expect_pane".to_string(),
                         pane_id: exec.pane_id.clone(),
                         status: exec.status.clone(),
-                        command_preview: preview_text(&format!("{}: {}", exec.mode, exec.pattern), 160),
+                        command_preview: preview_text(
+                            &format!("{}: {}", exec.mode, exec.pattern),
+                            160,
+                        ),
                         output_excerpt: preview_text(&exec.output, 220),
                         start_cursor: exec.cursor,
                         next_cursor: exec.next_cursor,
@@ -2169,8 +2197,10 @@ Useful for interactive shell workflows such as waiting for prompts, menu text, n
         }
     }
 
-    #[tool(description = "Inject raw text into a shell-like pane, optionally submitting Enter, and return the updated cursor. \
-Use this for truly interactive shell flows where you want to type first and inspect / expect later.")]
+    #[tool(
+        description = "Inject raw text into a shell-like pane, optionally submitting Enter, and return the updated cursor. \
+Use this for truly interactive shell flows where you want to type first and inspect / expect later."
+    )]
     async fn send_shell(
         &self,
         Parameters(args): Parameters<SendShellArgs>,
@@ -2214,7 +2244,9 @@ Use this for truly interactive shell flows where you want to type first and insp
         }
     }
 
-    #[tool(description = "Inject a single semantic key into a pane. Use this for interactive TUI/termbox/ncurses tools where raw text + newline is not enough. Supported keys include Enter, Esc, Tab, Backspace, Up, Down, Left, Right, Home, End, PgUp, PgDn, Ctrl+C and single printable characters.")]
+    #[tool(
+        description = "Inject a single semantic key into a pane. Use this for interactive TUI/termbox/ncurses tools where raw text + newline is not enough. Supported keys include Enter, Esc, Tab, Backspace, Up, Down, Left, Right, Home, End, PgUp, PgDn, Ctrl+C and single printable characters."
+    )]
     async fn send_key(
         &self,
         Parameters(args): Parameters<SendKeyArgs>,
@@ -2258,7 +2290,9 @@ Use this for truly interactive shell flows where you want to type first and insp
         }
     }
 
-    #[tool(description = "Read the current visible screen snapshot from a pane. This is intended for interactive full-screen tools (termbox/ncurses/TUI) where current screen state matters more than output delta.")]
+    #[tool(
+        description = "Read the current visible screen snapshot from a pane. This is intended for interactive full-screen tools (termbox/ncurses/TUI) where current screen state matters more than output delta."
+    )]
     async fn read_screen(
         &self,
         Parameters(args): Parameters<ReadScreenArgs>,
@@ -2283,7 +2317,9 @@ Use this for truly interactive shell flows where you want to type first and insp
         }
     }
 
-    #[tool(description = "Wait until the current visible screen snapshot of a pane matches a substring or regex. Use this for interactive TUI/termbox tools where menu state is shown on-screen rather than appended as plain output.")]
+    #[tool(
+        description = "Wait until the current visible screen snapshot of a pane matches a substring or regex. Use this for interactive TUI/termbox tools where menu state is shown on-screen rather than appended as plain output."
+    )]
     async fn expect_screen(
         &self,
         Parameters(args): Parameters<ExpectScreenArgs>,
@@ -2298,7 +2334,10 @@ Use this for truly interactive shell flows where you want to type first and insp
                         kind: "expect_screen".to_string(),
                         pane_id: exec.pane_id.clone(),
                         status: exec.status.clone(),
-                        command_preview: preview_text(&format!("{}: {}", exec.mode, exec.pattern), 160),
+                        command_preview: preview_text(
+                            &format!("{}: {}", exec.mode, exec.pattern),
+                            160,
+                        ),
                         output_excerpt: preview_text(&exec.output, 220),
                         start_cursor: 0,
                         next_cursor: 0,
@@ -2327,8 +2366,10 @@ Use this for truly interactive shell flows where you want to type first and insp
         }
     }
 
-    #[tool(description = "Read the recent shell-task ledger for a shell/terminal pane. \
-Shows recent send_shell_task / expect_pane / send_shell / playbook activity with cursors and excerpts.")]
+    #[tool(
+        description = "Read the recent shell-task ledger for a shell/terminal pane. \
+Shows recent send_shell_task / expect_pane / send_shell / playbook activity with cursors and excerpts."
+    )]
     async fn read_shell_task_ledger(
         &self,
         Parameters(args): Parameters<ReadShellTaskLedgerArgs>,
@@ -2346,9 +2387,11 @@ Shows recent send_shell_task / expect_pane / send_shell / playbook activity with
         )]))
     }
 
-    #[tool(description = "Run a multi-step shell playbook against a shell/terminal pane. \
+    #[tool(
+        description = "Run a multi-step shell playbook against a shell/terminal pane. \
 Supported step actions: send, send_shell_task, expect, read_delta, send_key, read_screen, expect_screen. \
-Coffee threads a rolling cursor through the steps and records the whole run into the shell-task ledger.")]
+Coffee threads a rolling cursor through the steps and records the whole run into the shell-task ledger."
+    )]
     async fn run_shell_playbook(
         &self,
         Parameters(args): Parameters<RunShellPlaybookArgs>,
@@ -2481,7 +2524,10 @@ Coffee threads a rolling cursor through the steps and records the whole run into
                                 kind: "run_shell_playbook".to_string(),
                                 pane_id: pane_short(&target_id),
                                 status: "timeout".to_string(),
-                                command_preview: preview_text(&format!("playbook steps={}", args.steps.len()), 160),
+                                command_preview: preview_text(
+                                    &format!("playbook steps={}", args.steps.len()),
+                                    160,
+                                ),
                                 output_excerpt: preview_text(&exec.output, 220),
                                 start_cursor: args.cursor.unwrap_or(0),
                                 next_cursor: cursor,
@@ -2564,7 +2610,8 @@ Coffee threads a rolling cursor through the steps and records the whole run into
                 }
                 "read_screen" => {
                     let last_n = step.last_n_lines.unwrap_or(120).clamp(1, 2000);
-                    let (screen, is_idle) = match self.execute_read_screen(&target_id, last_n).await {
+                    let (screen, is_idle) = match self.execute_read_screen(&target_id, last_n).await
+                    {
                         Ok(v) => v,
                         Err(e) => {
                             let payload = serde_json::json!({

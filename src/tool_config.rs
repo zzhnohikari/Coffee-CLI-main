@@ -92,9 +92,8 @@ pub fn save(cfg: &ToolConfig) -> std::io::Result<()> {
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let body = serde_json::to_string_pretty(cfg).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-    })?;
+    let body = serde_json::to_string_pretty(cfg)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
     // Atomic write so an interrupted save can't leave the file
     // half-written and unparseable on the next launch.
     let tmp = p.with_extension("json.tmp");
@@ -141,7 +140,10 @@ pub fn expand_path(input: &str) -> std::path::PathBuf {
         }
         return std::path::PathBuf::from("~");
     }
-    if let Some(stripped) = input.strip_prefix("~/").or_else(|| input.strip_prefix("~\\")) {
+    if let Some(stripped) = input
+        .strip_prefix("~/")
+        .or_else(|| input.strip_prefix("~\\"))
+    {
         if let Some(home) = dirs::home_dir() {
             return home.join(stripped);
         }
@@ -186,18 +188,33 @@ mod tests {
         let home = dirs::home_dir().expect("test needs a home dir");
         // Tilde forms expand
         assert_eq!(expand_path("~"), home);
-        assert_eq!(expand_path("~/.hermes/sessions"), home.join(".hermes").join("sessions"));
+        assert_eq!(
+            expand_path("~/.hermes/sessions"),
+            home.join(".hermes").join("sessions")
+        );
         // Backslash form on Windows-style paths
-        assert_eq!(expand_path("~\\.hermes\\sessions"), home.join(".hermes\\sessions"));
+        assert_eq!(
+            expand_path("~\\.hermes\\sessions"),
+            home.join(".hermes\\sessions")
+        );
         // Non-tilde paths pass through verbatim — UNC, absolute Unix, drive letters
         assert_eq!(
             expand_path("\\\\wsl.localhost\\Ubuntu\\home\\user\\.hermes"),
             std::path::PathBuf::from("\\\\wsl.localhost\\Ubuntu\\home\\user\\.hermes"),
         );
-        assert_eq!(expand_path("/abs/unix/path"), std::path::PathBuf::from("/abs/unix/path"));
-        assert_eq!(expand_path("C:\\Users\\someone"), std::path::PathBuf::from("C:\\Users\\someone"));
+        assert_eq!(
+            expand_path("/abs/unix/path"),
+            std::path::PathBuf::from("/abs/unix/path")
+        );
+        assert_eq!(
+            expand_path("C:\\Users\\someone"),
+            std::path::PathBuf::from("C:\\Users\\someone")
+        );
         // Tilde-in-middle does NOT expand (only leading)
-        assert_eq!(expand_path("/foo/~/bar"), std::path::PathBuf::from("/foo/~/bar"));
+        assert_eq!(
+            expand_path("/foo/~/bar"),
+            std::path::PathBuf::from("/foo/~/bar")
+        );
     }
 
     #[test]

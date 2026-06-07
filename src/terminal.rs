@@ -516,8 +516,7 @@ pub fn query_task_records(
             }
         })
         .filter(|record| {
-            include_completed
-                || (record.status != "completed" && record.status != "wake_failed")
+            include_completed || (record.status != "completed" && record.status != "wake_failed")
         })
         .cloned()
         .collect();
@@ -530,7 +529,9 @@ pub fn query_task_records(
     items
 }
 
-pub fn infer_pending_task_for_target(target_session_id: &str) -> Result<SentinelTaskRecord, String> {
+pub fn infer_pending_task_for_target(
+    target_session_id: &str,
+) -> Result<SentinelTaskRecord, String> {
     let map = sentinel_task_registry()
         .lock()
         .map_err(|_| "task registry poisoned".to_string())?;

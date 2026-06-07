@@ -152,9 +152,14 @@ pub fn prepare_pane_config_dir(
             // escape leadin in a basic-string).
             out.codex_extra_args = vec![
                 "-c".to_string(),
-                format!("mcp_servers.{key}.url='{url}'", key = MCP_KEY, url = endpoint.url),
+                format!(
+                    "mcp_servers.{key}.url='{url}'",
+                    key = MCP_KEY,
+                    url = endpoint.url
+                ),
             ];
-            out.codex_extra_args.extend(codex_extra_mcp_args(&extra_mcp_servers));
+            out.codex_extra_args
+                .extend(codex_extra_mcp_args(&extra_mcp_servers));
             out.codex_extra_args.push("-c".to_string());
             out.codex_extra_args.push(format!(
                 "model_instructions_file='{path}'",
@@ -275,7 +280,8 @@ fn prepare_isolated_codex_home(
         copy_dir_if_exists(&src_home.join("rules"), &target_home.join("rules"))?;
 
         let mut root = if let Ok(body) = fs::read_to_string(src_home.join("config.toml")) {
-            toml::from_str::<toml::Value>(&body).unwrap_or_else(|_| toml::Value::Table(toml::map::Map::new()))
+            toml::from_str::<toml::Value>(&body)
+                .unwrap_or_else(|_| toml::Value::Table(toml::map::Map::new()))
         } else {
             toml::Value::Table(toml::map::Map::new())
         };
@@ -395,7 +401,11 @@ fn codex_toml_value(value: &Value) -> String {
         Value::Number(n) => n.to_string(),
         Value::String(s) => format!("'{}'", s.replace('\'', "''")),
         Value::Array(arr) => {
-            let items = arr.iter().map(codex_toml_value).collect::<Vec<_>>().join(", ");
+            let items = arr
+                .iter()
+                .map(codex_toml_value)
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("[{items}]")
         }
         Value::Object(_) => "{}".to_string(),
@@ -594,8 +604,7 @@ mod tests {
         assert_eq!(gemini_md, "GEMINI BODY");
         // Stub in ~/.gemini/extensions/.
         if let Some(stub_dir) = gemini_extensions_dir().map(|d| d.join(&name)) {
-            let link = fs::read_to_string(stub_dir.join(".gemini-extension-install.json"))
-                .unwrap();
+            let link = fs::read_to_string(stub_dir.join(".gemini-extension-install.json")).unwrap();
             assert!(link.contains("\"type\""));
             assert!(link.contains("\"link\""));
             // serde_json escapes backslashes so the literal source path

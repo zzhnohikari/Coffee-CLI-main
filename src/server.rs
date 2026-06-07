@@ -884,7 +884,10 @@ async fn tier_terminal_start(
             _ => None,
         };
         if in_multi_agent
-            && matches!(tool.as_deref(), Some("claude" | "codex" | "gemini" | "opencode"))
+            && matches!(
+                tool.as_deref(),
+                Some("claude" | "codex" | "gemini" | "opencode")
+            )
             && !sentinel_enabled
         {
             log::warn!(
