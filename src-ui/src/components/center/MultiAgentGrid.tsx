@@ -29,7 +29,7 @@ import { createPortal } from 'react-dom';
 import { useAppState, type TerminalSession, type ToolType, type MultiAgentPane } from '../../store/app-state';
 import { TierTerminal } from './TierTerminal';
 import { ErrorBoundary } from '../common/ErrorBoundary';
-import { commands, type SavedSession, type MultiAgentProfilesConfig, type MultiAgentPaneProfile, type SkillOption, type McpOption } from '../../tauri';
+import { commands, waitForTauriBridge, type SavedSession, type MultiAgentProfilesConfig, type MultiAgentPaneProfile, type SkillOption, type McpOption } from '../../tauri';
 import { setFocusedPane } from '../../lib/pane-focus';
 import { getHistorySnapshot, prefetchHistory, subscribeHistory } from '../../lib/history-cache';
 import { encodePaneResumePayload } from '../../lib/pane-resume';
@@ -417,6 +417,30 @@ function EmptyPanePicker({
     commands.discoverLocalMcpServers().then(setMcpOptions).catch(() => setMcpOptions([]));
   }, [profileTool]);
 
+  useEffect(() => {
+    if (!profileTool) return;
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    waitForTauriBridge({ events: true, timeoutMs: 5000 })
+      .then(async (ready) => {
+        if (!ready || cancelled) return null;
+        const { listen } = await import('@tauri-apps/api/event');
+        return listen<MultiAgentProfilesConfig>('multi-agent-profiles-changed', (event) => {
+          setProfilesCfg(event.payload);
+        });
+      })
+      .then((fn) => {
+        if (!fn) return;
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [profileTool]);
+
   const historySessions = useMemo(() => {
     if (!historyTool) return [] as SavedSession[];
 
@@ -518,23 +542,43 @@ function EmptyPanePicker({
   const saveProfile = async () => {
     if (!profilesCfg || !draftProfile || !draftProfileId.trim()) return;
     const id = draftProfileId.trim();
+    const previousId = editingProfileId && editingProfileId !== '__new__' ? editingProfileId : '';
+    const isRename = !!previousId && previousId !== id;
+    const nextProfiles = { ...profilesCfg.profiles };
+    if (isRename) delete nextProfiles[previousId];
+    nextProfiles[id] = {
+      ...draftProfile,
+      tool: String(profileTool || draftProfile.tool),
+      mcpConfigPath: draftProfile.mcpConfigPath || '',
+    };
+    const deletedProfiles = new Set(profilesCfg.deletedProfiles || []);
+    deletedProfiles.delete(id);
+    if (isRename) deletedProfiles.add(previousId);
+    const nextPresets = Object.fromEntries(
+      Object.entries(profilesCfg.teamPresets || {}).map(([presetId, preset]) => [
+        presetId,
+        {
+          ...preset,
+          panes: (preset.panes || []).map((pane) =>
+            isRename && pane.profileId === previousId ? { ...pane, profileId: id } : pane,
+          ),
+        },
+      ]),
+    );
     const next: MultiAgentProfilesConfig = {
       ...profilesCfg,
-      profiles: {
-        ...profilesCfg.profiles,
-        [id]: {
-          ...draftProfile,
-          tool: String(profileTool || draftProfile.tool),
-          mcpConfigPath: draftProfile.mcpConfigPath || '',
-        },
-      },
+      profiles: nextProfiles,
+      teamPresets: nextPresets,
+      deletedProfiles: Array.from(deletedProfiles),
     };
     await commands.setMultiAgentProfiles(next);
     if (draftApiKey.trim()) {
       const status = await commands.saveApiKey(id, draftApiKey);
+      if (isRename) await commands.deleteApiKey(previousId).catch(() => {});
       setApiKeyStatus(status.message);
     } else {
       await commands.deleteApiKey(id).catch(() => {});
+      if (isRename) await commands.deleteApiKey(previousId).catch(() => {});
       setApiKeyStatus(t('profile.api_key_missing' as any));
     }
     setProfilesCfg(next);
@@ -546,9 +590,25 @@ function EmptyPanePicker({
     if (!profilesCfg) return;
     const nextProfiles = { ...profilesCfg.profiles };
     delete nextProfiles[profileId];
+    const nextPresets = Object.fromEntries(
+      Object.entries(profilesCfg.teamPresets || {}).filter(([, preset]) =>
+        !(preset.panes || []).some((pane) => pane.profileId === profileId),
+      ),
+    );
+    const deletedProfiles = new Set(profilesCfg.deletedProfiles || []);
+    deletedProfiles.add(profileId);
+    const deletedTeamPresets = new Set(profilesCfg.deletedTeamPresets || []);
+    for (const [presetId, preset] of Object.entries(profilesCfg.teamPresets || {})) {
+      if ((preset.panes || []).some((pane) => pane.profileId === profileId)) {
+        deletedTeamPresets.add(presetId);
+      }
+    }
     const next: MultiAgentProfilesConfig = {
       ...profilesCfg,
       profiles: nextProfiles,
+      teamPresets: nextPresets,
+      deletedProfiles: Array.from(deletedProfiles),
+      deletedTeamPresets: Array.from(deletedTeamPresets),
     };
     await commands.setMultiAgentProfiles(next);
     await commands.deleteApiKey(profileId).catch(() => {});

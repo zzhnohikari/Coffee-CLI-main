@@ -438,6 +438,16 @@ pub fn prune_pane_artifacts() {
             }
         }
     }
+    let profile_mcp_root = std::env::temp_dir().join("coffee-cli").join("profile-mcp");
+    if profile_mcp_root.exists() {
+        if let Err(e) = fs::remove_dir_all(&profile_mcp_root) {
+            log::warn!(
+                "[mcp-inject] prune {} failed: {}",
+                profile_mcp_root.display(),
+                e
+            );
+        }
+    }
 }
 
 fn panes_root() -> PathBuf {

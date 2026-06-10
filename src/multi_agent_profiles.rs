@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,6 +82,10 @@ pub struct MultiAgentProfilesConfig {
     pub profiles: HashMap<String, MultiAgentPaneProfile>,
     #[serde(default)]
     pub team_presets: HashMap<String, MultiAgentTeamPreset>,
+    #[serde(default)]
+    pub deleted_profiles: Vec<String>,
+    #[serde(default)]
+    pub deleted_team_presets: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -423,6 +427,8 @@ pub fn default_config() -> MultiAgentProfilesConfig {
     MultiAgentProfilesConfig {
         profiles,
         team_presets,
+        deleted_profiles: Vec::new(),
+        deleted_team_presets: Vec::new(),
     }
 }
 
@@ -430,38 +436,51 @@ pub fn load() -> MultiAgentProfilesConfig {
     let Some(path) = config_path() else {
         return default_config();
     };
-    let Ok(body) = std::fs::read_to_string(&path) else {
-        let cfg = default_config();
-        let _ = save(&cfg);
-        return cfg;
-    };
-    let loaded = serde_json::from_str::<MultiAgentProfilesConfig>(&body)
-        .unwrap_or_else(|_| default_config());
-    let defaults = default_config();
-
-    let mut merged_profiles = defaults.profiles;
-    for (key, value) in loaded.profiles {
-        merged_profiles.insert(key, value);
-    }
-
-    let mut merged_presets = defaults.team_presets;
-    for (key, value) in loaded.team_presets {
-        merged_presets.insert(key, value);
-    }
-
-    let merged = MultiAgentProfilesConfig {
-        profiles: merged_profiles,
-        team_presets: merged_presets,
-    };
-
-    let _ = save(&merged);
-    merged
+    load_from_path(&path)
 }
 
 pub fn save(cfg: &MultiAgentProfilesConfig) -> std::io::Result<()> {
     let Some(path) = config_path() else {
         return Err(std::io::Error::other("no home dir"));
     };
+    save_to_path(cfg, &path)
+}
+
+fn load_from_path(path: &Path) -> MultiAgentProfilesConfig {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return default_config();
+    };
+    let loaded = serde_json::from_str::<MultiAgentProfilesConfig>(&body)
+        .unwrap_or_else(|_| default_config());
+    let defaults = default_config();
+    let deleted_profiles = loaded.deleted_profiles;
+    let deleted_team_presets = loaded.deleted_team_presets;
+
+    let mut merged_profiles = defaults.profiles;
+    for key in &deleted_profiles {
+        merged_profiles.remove(key);
+    }
+    for (key, value) in loaded.profiles {
+        merged_profiles.insert(key, value);
+    }
+
+    let mut merged_presets = defaults.team_presets;
+    for key in &deleted_team_presets {
+        merged_presets.remove(key);
+    }
+    for (key, value) in loaded.team_presets {
+        merged_presets.insert(key, value);
+    }
+
+    MultiAgentProfilesConfig {
+        profiles: merged_profiles,
+        team_presets: merged_presets,
+        deleted_profiles,
+        deleted_team_presets,
+    }
+}
+
+fn save_to_path(cfg: &MultiAgentProfilesConfig, path: &Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -568,5 +587,49 @@ pub fn load_extra_mcp_servers(path_str: &str) -> Map<String, Value> {
             );
             Map::new()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_missing_profile_file_returns_defaults_without_writing() {
+        let dir =
+            std::env::temp_dir().join(format!("coffee-cli-profile-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("multi-agent-profiles.json");
+
+        let cfg = load_from_path(&path);
+        assert!(!cfg.profiles.is_empty());
+        assert!(!path.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_respects_deleted_default_profiles() {
+        let dir =
+            std::env::temp_dir().join(format!("coffee-cli-profile-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("multi-agent-profiles.json");
+        std::fs::write(
+            &path,
+            r#"{
+              "profiles": {},
+              "teamPresets": {},
+              "deletedProfiles": ["codex-worker"],
+              "deletedTeamPresets": ["claude-trio"]
+            }"#,
+        )
+        .expect("write profile fixture");
+
+        let cfg = load_from_path(&path);
+        assert!(!cfg.profiles.contains_key("codex-worker"));
+        assert!(!cfg.team_presets.contains_key("claude-trio"));
+        assert!(cfg.profiles.contains_key("claude-main"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

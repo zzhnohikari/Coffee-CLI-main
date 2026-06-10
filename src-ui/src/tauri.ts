@@ -386,6 +386,8 @@ export interface MultiAgentTeamPreset {
 export interface MultiAgentProfilesConfig {
   profiles: Record<string, MultiAgentPaneProfile>;
   teamPresets: Record<string, MultiAgentTeamPreset>;
+  deletedProfiles?: string[];
+  deletedTeamPresets?: string[];
 }
 
 export interface SkillOption {

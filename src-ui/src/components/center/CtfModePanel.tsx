@@ -657,6 +657,29 @@ export function CtfModePanel({ tab, hasBg, bgUrl, bgType }: Props) {
     commands.checkToolsInstalled().then(setToolsInstalled).catch(() => setToolsInstalled({}));
   }, []);
 
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    waitForTauriBridge({ events: true, timeoutMs: 5000 })
+      .then(async (ready) => {
+        if (!ready || cancelled) return null;
+        const { listen } = await import('@tauri-apps/api/event');
+        return listen<MultiAgentProfilesConfig>('multi-agent-profiles-changed', (event) => {
+          setProfilesCfg(event.payload);
+        });
+      })
+      .then((fn) => {
+        if (!fn) return;
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
   const persistConfig = (next: CtfModeConfig) => {
     setConfig(next);
   };

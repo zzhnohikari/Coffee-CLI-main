@@ -160,6 +160,53 @@ fn write_claude_settings_overlay(
     Ok(Some(path))
 }
 
+fn codex_profile_config_args(
+    payload: &crate::multi_agent_profiles::PaneLaunchPayload,
+) -> Vec<String> {
+    let mut args = Vec::new();
+    if !payload.model.trim().is_empty() {
+        args.push("-c".to_string());
+        args.push(format!("model={:?}", payload.model.trim()));
+    }
+
+    let base_url = payload.api_base_url.trim();
+    if !base_url.is_empty() {
+        let provider = format!(
+            "coffee_profile_{}",
+            sanitize_config_key(&payload.profile_id)
+        );
+        args.push("-c".to_string());
+        args.push(format!("model_provider={provider:?}"));
+        args.push("-c".to_string());
+        args.push(format!("model_providers.{provider}.name={provider:?}"));
+        args.push("-c".to_string());
+        args.push(format!("model_providers.{provider}.base_url={base_url:?}"));
+        args.push("-c".to_string());
+        args.push(format!("model_providers.{provider}.wire_api=\"responses\""));
+        args.push("-c".to_string());
+        args.push(format!(
+            "model_providers.{provider}.requires_openai_auth=true"
+        ));
+    }
+    args
+}
+
+fn sanitize_config_key(raw: &str) -> String {
+    let mut out = String::new();
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        "profile".to_string()
+    } else {
+        out
+    }
+}
+
 /// Shared app state
 pub struct AppState {
     pub terminal_session: terminal::SharedSession,
@@ -1094,6 +1141,15 @@ fn tier_terminal_start_blocking(
     // mode.
     let in_multi_agent = session_id.contains("::pane-");
 
+    // Determine the user's intended workspace before building CLI args. Codex
+    // panes may still spawn from an isolated HOME/CWD to avoid loading global
+    // `.codex`, but Codex itself should treat this as the working root.
+    let real_spawn_cwd = if dir.as_os_str().is_empty() || !dir.is_dir() {
+        dirs::home_dir().map(|p| p.to_string_lossy().to_string())
+    } else {
+        Some(dir.to_string_lossy().to_string())
+    };
+
     // Map the requested tool to an actual CLI command.
     let (cmd, args): (String, Vec<String>) = match tool.as_deref() {
         Some("claude") => {
@@ -1167,11 +1223,16 @@ fn tier_terminal_start_blocking(
         Some("openclaw") => ("openclaw".to_string(), vec!["tui".to_string()]),
         Some("codex") => {
             let mut a = vec![];
+            if let Some(real_cwd) = real_spawn_cwd.as_deref() {
+                a.push("--cd".to_string());
+                a.push(real_cwd.to_string());
+            }
             if let Some(payload) = pane_launch_payload.as_ref() {
                 if !payload.model.trim().is_empty() {
                     a.push("--model".to_string());
                     a.push(payload.model.trim().to_string());
                 }
+                a.extend(codex_profile_config_args(payload));
             }
             if in_multi_agent {
                 // Hands-free multi-agent: no human is present to click
@@ -1385,14 +1446,6 @@ fn tier_terminal_start_blocking(
         }
     }
 
-    // Determine the CWD to pass to the Agent:
-    // 1. If workspace has an explicit dir (from open-folder or resume) → use it
-    // 2. Otherwise default to user's home dir (matches most agents' default)
-    let real_spawn_cwd = if dir.as_os_str().is_empty() || !dir.is_dir() {
-        dirs::home_dir().map(|p| p.to_string_lossy().to_string())
-    } else {
-        Some(dir.to_string_lossy().to_string())
-    };
     let mut process_spawn_cwd = real_spawn_cwd.clone();
     if let Some(process_home) = pane_paths
         .as_ref()
@@ -1419,6 +1472,20 @@ fn tier_terminal_start_blocking(
     if let Some(payload) = pane_launch_payload.as_ref() {
         for (k, v) in &payload.env {
             extra_env.push((k.clone(), v.clone()));
+        }
+        if tool.as_deref() == Some("codex") {
+            if !payload.profile_id.trim().is_empty() {
+                if let Ok(Some(api_key)) = load_api_key(payload.profile_id.trim().to_string()) {
+                    if !extra_env.iter().any(|(k, _)| k == "OPENAI_API_KEY") {
+                        extra_env.push(("OPENAI_API_KEY".to_string(), api_key));
+                    }
+                }
+            }
+            if !payload.api_base_url.trim().is_empty() {
+                if !extra_env.iter().any(|(k, _)| k == "OPENAI_BASE_URL") {
+                    extra_env.push(("OPENAI_BASE_URL".to_string(), payload.api_base_url.clone()));
+                }
+            }
         }
         if tool.as_deref() != Some("claude")
             && !payload.api_base_url_env_name.trim().is_empty()
@@ -3211,6 +3278,10 @@ fn tier_terminal_resume(
                 }
             }
             "codex" => {
+                if !cwd.trim().is_empty() {
+                    global_args.push("--cd".to_string());
+                    global_args.push(cwd.clone());
+                }
                 global_args.push("--dangerously-bypass-approvals-and-sandbox".to_string());
                 if let Some(extra) = pane_paths.as_ref().map(|pp| pp.codex_extra_args.clone()) {
                     global_args.extend(extra);
@@ -3796,15 +3867,15 @@ fn load_api_key(profile_id: String) -> Result<Option<String>, String> {
 #[tauri::command]
 fn delete_api_key(profile_id: String) -> Result<(), String> {
     let account = format!("multi-agent-profile:{}", profile_id);
+    let mut map = load_profile_secrets_map();
+    if map.remove(&profile_id).is_some() {
+        save_profile_secrets_map(&map)?;
+    }
     if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &account) {
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => {}
             Err(e) => return Err(e.to_string()),
         }
-    }
-    let mut map = load_profile_secrets_map();
-    if map.remove(&profile_id).is_some() {
-        save_profile_secrets_map(&map)?;
     }
     Ok(())
 }
@@ -3850,8 +3921,11 @@ pub fn get_multi_agent_profiles() -> crate::multi_agent_profiles::MultiAgentProf
 #[tauri::command]
 pub fn set_multi_agent_profiles(
     cfg: crate::multi_agent_profiles::MultiAgentProfilesConfig,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
-    crate::multi_agent_profiles::save(&cfg).map_err(|e| e.to_string())
+    crate::multi_agent_profiles::save(&cfg).map_err(|e| e.to_string())?;
+    let _ = app.emit("multi-agent-profiles-changed", &cfg);
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize, Clone)]
