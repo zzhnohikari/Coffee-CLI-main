@@ -1551,6 +1551,20 @@ fn tier_terminal_start_blocking(
     )
     .map_err(|e| format!("Failed to spawn PTY: {}", e))?;
 
+    if let (Some(payload), Some(tool_name)) = (pane_launch_payload.as_ref(), tool_name.as_deref()) {
+        if payload.mode == crate::multi_agent_profiles::PANE_LAUNCH_MODE {
+            if let Some(profile_tool_data) = tool_data.as_ref() {
+                persist_profile_launch_metadata_async(
+                    terminal_session.clone(),
+                    session_id.clone(),
+                    tool_name.to_string(),
+                    actual_cwd.clone(),
+                    profile_tool_data.clone(),
+                );
+            }
+        }
+    }
+
     if let Some(payload) = pane_launch_payload.as_ref() {
         if !payload.startup_input.trim().is_empty() {
             let session_id2 = session_id.clone();
@@ -1724,6 +1738,7 @@ struct SavedSession {
     saved_at: String,
     file_path: Option<String>,
     turn_count: Option<u32>,
+    profile_tool_data: Option<String>,
 }
 
 fn sessions_file_path() -> PathBuf {
@@ -1732,6 +1747,168 @@ fn sessions_file_path() -> PathBuf {
         .join(".coffee-cli");
     let _ = std::fs::create_dir_all(&dir);
     dir.join("sessions.json")
+}
+
+fn session_profile_metadata_path() -> PathBuf {
+    let dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".coffee-cli");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("session-profile-metadata.json")
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct SessionProfileMetadata {
+    #[serde(default)]
+    records: Vec<SessionProfileRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionProfileRecord {
+    coffee_session_id: String,
+    tool: String,
+    cwd: String,
+    profile_tool_data: String,
+    started_at_ms: u64,
+    native_session_token: Option<String>,
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
+fn parse_saved_at_millis(saved_at: &str) -> Option<u64> {
+    let n = saved_at.parse::<u64>().ok()?;
+    Some(if n < 100_000_000_000 { n * 1000 } else { n })
+}
+
+fn normalize_history_cwd(cwd: &str) -> String {
+    cwd.replace('\\', "/")
+        .trim_end_matches('/')
+        .to_ascii_lowercase()
+}
+
+fn load_session_profile_metadata() -> SessionProfileMetadata {
+    let path = session_profile_metadata_path();
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<SessionProfileMetadata>(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_session_profile_metadata(meta: &SessionProfileMetadata) -> std::io::Result<()> {
+    let path = session_profile_metadata_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let body = serde_json::to_string_pretty(meta)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, body)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+fn upsert_session_profile_record(record: SessionProfileRecord) {
+    let mut meta = load_session_profile_metadata();
+    meta.records.retain(|r| {
+        r.coffee_session_id != record.coffee_session_id
+            && !(r.tool == record.tool
+                && r.native_session_token.is_some()
+                && r.native_session_token == record.native_session_token)
+    });
+    meta.records.push(record);
+    meta.records
+        .sort_by_key(|r| std::cmp::Reverse(r.started_at_ms));
+    meta.records.truncate(200);
+    if let Err(e) = save_session_profile_metadata(&meta) {
+        log::warn!("[history] failed to save session profile metadata: {}", e);
+    }
+}
+
+fn attach_profile_metadata_to_sessions(sessions: &mut [SavedSession]) {
+    let meta = load_session_profile_metadata();
+    if meta.records.is_empty() {
+        return;
+    }
+
+    for session in sessions {
+        if session.profile_tool_data.is_some() {
+            continue;
+        }
+
+        if let Some(token) = session.session_token.as_deref() {
+            if let Some(record) = meta.records.iter().find(|r| {
+                r.tool == session.tool && r.native_session_token.as_deref() == Some(token)
+            }) {
+                session.profile_tool_data = Some(record.profile_tool_data.clone());
+                continue;
+            }
+        }
+
+        let Some(saved_ms) = parse_saved_at_millis(&session.saved_at) else {
+            continue;
+        };
+        let cwd = normalize_history_cwd(&session.cwd);
+        let fallback = meta
+            .records
+            .iter()
+            .filter(|r| {
+                r.tool == session.tool
+                    && normalize_history_cwd(&r.cwd) == cwd
+                    && r.started_at_ms <= saved_ms.saturating_add(10 * 60 * 1000)
+                    && saved_ms.saturating_sub(r.started_at_ms) <= 12 * 60 * 60 * 1000
+            })
+            .max_by_key(|r| r.started_at_ms);
+        if let Some(record) = fallback {
+            session.profile_tool_data = Some(record.profile_tool_data.clone());
+        }
+    }
+}
+
+fn persist_profile_launch_metadata_async(
+    terminal_session: terminal::SharedSession,
+    coffee_session_id: String,
+    tool: String,
+    cwd: String,
+    profile_tool_data: String,
+) {
+    if profile_tool_data.trim().is_empty() {
+        return;
+    }
+    let started_at_ms = now_millis();
+    upsert_session_profile_record(SessionProfileRecord {
+        coffee_session_id: coffee_session_id.clone(),
+        tool: tool.clone(),
+        cwd: cwd.clone(),
+        profile_tool_data: profile_tool_data.clone(),
+        started_at_ms,
+        native_session_token: None,
+    });
+
+    std::thread::spawn(move || {
+        for _ in 0..60 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let token = terminal_session.lock().ok().and_then(|map| {
+                map.get(&coffee_session_id)
+                    .and_then(|s| s.session_token.lock().ok().and_then(|t| t.clone()))
+            });
+            if let Some(native_session_token) = token {
+                upsert_session_profile_record(SessionProfileRecord {
+                    coffee_session_id,
+                    tool,
+                    cwd,
+                    profile_tool_data,
+                    started_at_ms,
+                    native_session_token: Some(native_session_token),
+                });
+                break;
+            }
+        }
+    });
 }
 
 /// XML-style tags injected into the user message stream by Claude /
@@ -1900,6 +2077,7 @@ fn parse_agent_jsonl(file_path: &std::path::Path, tool_name: &str) -> Option<Sav
         saved_at: updated_at,
         file_path: Some(file_path.to_string_lossy().into_owned()),
         turn_count: Some(turn_count),
+        profile_tool_data: None,
     })
 }
 
@@ -2012,6 +2190,7 @@ fn parse_codex_session_jsonl(file_path: &std::path::Path) -> Option<SavedSession
         saved_at: updated_at,
         file_path: Some(file_path.to_string_lossy().into_owned()),
         turn_count: Some(turn_count),
+        profile_tool_data: None,
     })
 }
 
@@ -2119,6 +2298,7 @@ fn parse_gemini_session_jsonl(
         saved_at: updated_at,
         file_path: Some(file_path.to_string_lossy().into_owned()),
         turn_count: Some(turn_count),
+        profile_tool_data: None,
     })
 }
 
@@ -2214,6 +2394,7 @@ fn parse_qwen_session_jsonl(file_path: &std::path::Path) -> Option<SavedSession>
         saved_at: updated_at,
         file_path: Some(file_path.to_string_lossy().into_owned()),
         turn_count: Some(turn_count),
+        profile_tool_data: None,
     })
 }
 
@@ -2607,6 +2788,7 @@ fn parse_hermes_json(file_path: &std::path::Path) -> Option<SavedSession> {
         saved_at,
         file_path: Some(file_path.to_string_lossy().into_owned()),
         turn_count: Some(turn_count),
+        profile_tool_data: None,
     })
 }
 
@@ -2656,6 +2838,7 @@ fn parse_opencode_session(
         saved_at,
         file_path: Some(file_path.to_string_lossy().into_owned()),
         turn_count: Some(turn_count),
+        profile_tool_data: None,
     })
 }
 
@@ -2746,6 +2929,7 @@ fn find_opencode_sessions_sqlite(db_path: &std::path::Path, result: &mut Vec<Sav
             saved_at: time_updated.to_string(),
             file_path: None,
             turn_count: Some(turn_count),
+            profile_tool_data: None,
         })
     });
 
@@ -2888,6 +3072,7 @@ fn load_native_history_blocking() -> Result<Vec<SavedSession>, String> {
         find_opencode_sessions(opencode_dir, &mut result);
     }
 
+    attach_profile_metadata_to_sessions(&mut result);
     result.sort_by(|a, b| b.saved_at.cmp(&a.saved_at));
     result.truncate(HISTORY_LIMIT);
     Ok(result)
@@ -3204,6 +3389,7 @@ fn tier_terminal_resume(
     rows: u16,
     cwd: String,
     sentinel_enabled: Option<bool>,
+    profile_tool_data: Option<String>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -3224,6 +3410,20 @@ fn tier_terminal_resume(
 
     let sentinel_enabled = sentinel_enabled.unwrap_or(false);
     let in_multi_agent = saved_session_id.contains("::pane-");
+    let pane_launch_payload =
+        crate::multi_agent_profiles::decode_pane_launch_payload(profile_tool_data.as_deref());
+    let profile_prompt_block = pane_launch_payload
+        .as_ref()
+        .map(crate::multi_agent_profiles::prompt_block)
+        .unwrap_or_default();
+    let extra_mcp_servers = pane_launch_payload
+        .as_ref()
+        .map(load_profile_mcp_servers)
+        .unwrap_or_default();
+    let selected_skills = pane_launch_payload
+        .as_ref()
+        .map(|payload| payload.skills.clone())
+        .unwrap_or_default();
     let pane_paths = if in_multi_agent
         && sentinel_enabled
         && matches!(tool.as_str(), "claude" | "codex" | "gemini" | "opencode")
@@ -3239,14 +3439,15 @@ fn tier_terminal_resume(
         } else {
             protocol
         };
+        let protocol = merge_prompt_sections(&protocol, &profile_prompt_block);
         Some(
             crate::mcp_injector::prepare_pane_config_dir(
                 &saved_session_id,
                 &tool,
                 &endpoint,
                 &protocol,
-                Some(serde_json::Map::new()),
-                &[],
+                Some(extra_mcp_servers),
+                &selected_skills,
             )
             .map_err(|e| format!("Failed to prepare pane resume config: {e}"))?,
         )
@@ -3261,6 +3462,18 @@ fn tier_terminal_resume(
     if in_multi_agent {
         match tool.as_str() {
             "claude" => {
+                if let Some(payload) = pane_launch_payload.as_ref() {
+                    if let Some(settings_path) =
+                        write_claude_settings_overlay(&saved_session_id, payload)?
+                    {
+                        global_args.push("--settings".to_string());
+                        global_args.push(settings_path.display().to_string());
+                    }
+                    if !payload.model.trim().is_empty() {
+                        global_args.push("--model".to_string());
+                        global_args.push(payload.model.trim().to_string());
+                    }
+                }
                 global_args.push("--dangerously-skip-permissions".to_string());
                 if let Some(p) = pane_paths
                     .as_ref()
@@ -3281,6 +3494,13 @@ fn tier_terminal_resume(
                 if !cwd.trim().is_empty() {
                     global_args.push("--cd".to_string());
                     global_args.push(cwd.clone());
+                }
+                if let Some(payload) = pane_launch_payload.as_ref() {
+                    if !payload.model.trim().is_empty() {
+                        global_args.push("--model".to_string());
+                        global_args.push(payload.model.trim().to_string());
+                    }
+                    global_args.extend(codex_profile_config_args(payload));
                 }
                 global_args.push("--dangerously-bypass-approvals-and-sandbox".to_string());
                 if let Some(extra) = pane_paths.as_ref().map(|pp| pp.codex_extra_args.clone()) {
@@ -3315,6 +3535,47 @@ fn tier_terminal_resume(
     }
 
     let mut extra_env: Vec<(String, String)> = Vec::new();
+    if let Some(payload) = pane_launch_payload.as_ref() {
+        for (k, v) in &payload.env {
+            extra_env.push((k.clone(), v.clone()));
+        }
+        if tool == "codex" {
+            if !payload.profile_id.trim().is_empty() {
+                if let Ok(Some(api_key)) = load_api_key(payload.profile_id.trim().to_string()) {
+                    if !extra_env.iter().any(|(k, _)| k == "OPENAI_API_KEY") {
+                        extra_env.push(("OPENAI_API_KEY".to_string(), api_key));
+                    }
+                }
+            }
+            if !payload.api_base_url.trim().is_empty()
+                && !extra_env.iter().any(|(k, _)| k == "OPENAI_BASE_URL")
+            {
+                extra_env.push(("OPENAI_BASE_URL".to_string(), payload.api_base_url.clone()));
+            }
+        }
+        if tool != "claude"
+            && !payload.api_base_url_env_name.trim().is_empty()
+            && !payload.api_base_url.trim().is_empty()
+        {
+            extra_env.push((
+                payload.api_base_url_env_name.trim().to_string(),
+                payload.api_base_url.clone(),
+            ));
+        }
+        if tool != "claude"
+            && !payload.api_key_env_name.trim().is_empty()
+            && !payload.profile_id.trim().is_empty()
+        {
+            if let Ok(Some(api_key)) = load_api_key(payload.profile_id.trim().to_string()) {
+                extra_env.push((payload.api_key_env_name.trim().to_string(), api_key));
+            } else {
+                log::warn!(
+                    "[multi-agent profiles] api key for profile '{}' was not available at resume time",
+                    payload.profile_id
+                );
+            }
+        }
+    }
     if let Some(p) = pane_paths
         .as_ref()
         .and_then(|pp| pp.opencode_config_path.as_ref())

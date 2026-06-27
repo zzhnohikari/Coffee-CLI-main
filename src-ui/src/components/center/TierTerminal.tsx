@@ -670,6 +670,7 @@ function TierTerminalImpl({
             initialRows,
             resumeSession.cwd || folderPath || '',
             sentinelEnabled,
+            resumeSession.profile_tool_data ?? null,
           );
         } else {
           await commands.tierTerminalStart(sessionId, tool, initialCols, initialRows, theme, lang, toolData, folderPath ?? undefined, sentinelEnabled);

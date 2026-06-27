@@ -210,7 +210,15 @@ export function ChatReader({ sessionId }: { sessionId: string }) {
     // to the past chat and pick another session — or close it manually
     // once the resume is confirmed running.
     commands.tierTerminalResume(
-      currentSession.id, targetId, currentSession.tool, currentSession.session_token, 80, 24, currentSession.cwd
+      currentSession.id,
+      targetId,
+      currentSession.tool,
+      currentSession.session_token,
+      80,
+      24,
+      currentSession.cwd,
+      false,
+      currentSession.profile_tool_data ?? null,
     ).catch(console.error);
   };
 

@@ -32,6 +32,9 @@ function normalizeSavedSession(raw: unknown): SavedSession | null {
     saved_at: typeof session.saved_at === 'string' ? session.saved_at : '',
     file_path: typeof session.file_path === 'string' ? session.file_path : undefined,
     turn_count: typeof session.turn_count === 'number' ? session.turn_count : undefined,
+    profile_tool_data: typeof session.profile_tool_data === 'string'
+      ? session.profile_tool_data
+      : undefined,
   };
 }
 
