@@ -1481,10 +1481,10 @@ fn tier_terminal_start_blocking(
                     }
                 }
             }
-            if !payload.api_base_url.trim().is_empty() {
-                if !extra_env.iter().any(|(k, _)| k == "OPENAI_BASE_URL") {
-                    extra_env.push(("OPENAI_BASE_URL".to_string(), payload.api_base_url.clone()));
-                }
+            if !payload.api_base_url.trim().is_empty()
+                && !extra_env.iter().any(|(k, _)| k == "OPENAI_BASE_URL")
+            {
+                extra_env.push(("OPENAI_BASE_URL".to_string(), payload.api_base_url.clone()));
             }
         }
         if tool.as_deref() != Some("claude")

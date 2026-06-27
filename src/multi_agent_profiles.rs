@@ -488,7 +488,7 @@ fn save_to_path(cfg: &MultiAgentProfilesConfig, path: &Path) -> std::io::Result<
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, body)?;
-    std::fs::rename(&tmp, &path)?;
+    std::fs::rename(&tmp, path)?;
     Ok(())
 }
 
