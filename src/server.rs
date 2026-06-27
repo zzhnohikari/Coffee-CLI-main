@@ -4238,6 +4238,57 @@ fn mcp_option_id(source: &str, name: &str) -> String {
     format!("{}:{}", source, name)
 }
 
+fn mcp_option_is_selected(selected: &HashSet<String>, opt: &McpOption) -> bool {
+    selected.contains(&opt.id) || selected.contains(&opt.name)
+}
+
+#[cfg(test)]
+mod mcp_selection_tests {
+    use super::{mcp_option_is_selected, McpOption};
+    use std::collections::HashSet;
+
+    fn option(id: &str, name: &str) -> McpOption {
+        McpOption {
+            id: id.to_string(),
+            name: name.to_string(),
+            label: name.to_string(),
+            source: ".claude.json".to_string(),
+            config_json: "{}".to_string(),
+        }
+    }
+
+    fn selected(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    #[test]
+    fn mcp_selection_accepts_current_source_qualified_ids() {
+        let opt = option(".claude.json:chrome-mcp-server", "chrome-mcp-server");
+
+        assert!(mcp_option_is_selected(
+            &selected(&[".claude.json:chrome-mcp-server"]),
+            &opt
+        ));
+    }
+
+    #[test]
+    fn mcp_selection_accepts_legacy_bare_server_names() {
+        let opt = option(".claude.json:chrome-mcp-server", "chrome-mcp-server");
+
+        assert!(mcp_option_is_selected(
+            &selected(&["chrome-mcp-server"]),
+            &opt
+        ));
+    }
+
+    #[test]
+    fn mcp_selection_rejects_unselected_servers() {
+        let opt = option(".claude.json:chrome-mcp-server", "chrome-mcp-server");
+
+        assert!(!mcp_option_is_selected(&selected(&["frida-mcp"]), &opt));
+    }
+}
+
 #[tauri::command]
 pub fn discover_local_skills() -> Result<Vec<SkillOption>, String> {
     let mut out = Vec::new();
@@ -4349,7 +4400,7 @@ fn load_selected_mcp_servers(
 
     let mut out = serde_json::Map::new();
     for opt in all {
-        if !selected.contains(&opt.id) {
+        if !mcp_option_is_selected(&selected, &opt) {
             continue;
         }
         match serde_json::from_str::<serde_json::Value>(&opt.config_json) {
