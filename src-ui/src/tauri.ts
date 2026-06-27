@@ -399,6 +399,7 @@ export interface SkillOption {
 
 export interface McpOption {
   id: string;
+  name: string;
   label: string;
   source: string;
   config_json: string;

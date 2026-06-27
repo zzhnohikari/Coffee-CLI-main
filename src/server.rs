@@ -2967,6 +2967,28 @@ fn collect_hermes_paths_with_mtime(
     }
 }
 
+fn cap_history_candidates_for_tool(
+    candidates: &mut Vec<(std::time::SystemTime, std::path::PathBuf, &'static str)>,
+    tool: &'static str,
+    limit: usize,
+) {
+    let mut owned: Vec<_> = candidates
+        .iter()
+        .filter(|(_, _, t)| *t == tool)
+        .cloned()
+        .collect();
+    if owned.len() <= limit {
+        return;
+    }
+    owned.sort_by_key(|candidate| std::cmp::Reverse(candidate.0));
+    let keep: HashSet<std::path::PathBuf> = owned
+        .into_iter()
+        .take(limit)
+        .map(|(_, path, _)| path)
+        .collect();
+    candidates.retain(|(_, path, t)| *t != tool || keep.contains(path));
+}
+
 #[tauri::command]
 async fn get_native_history() -> Result<Vec<SavedSession>, String> {
     // Async command + spawn_blocking so the file I/O runs on a dedicated
@@ -2981,8 +3003,9 @@ async fn get_native_history() -> Result<Vec<SavedSession>, String> {
 fn load_native_history_blocking() -> Result<Vec<SavedSession>, String> {
     // Cap history to the N most recent entries. Keeps UI responsive when users
     // have hundreds of sessions — parsing a full jsonl/json file is expensive,
-    // so we pre-select candidates by file mtime and only parse the top N.
+    // so we pre-select a bounded number per tool before the final global cap.
     const HISTORY_LIMIT: usize = 30;
+    const HISTORY_LIMIT_PER_TOOL: usize = 30;
 
     let mut file_candidates: Vec<(std::time::SystemTime, std::path::PathBuf, &'static str)> =
         Vec::new();
@@ -3000,16 +3023,19 @@ fn load_native_history_blocking() -> Result<Vec<SavedSession>, String> {
         let claude_dir =
             crate::tool_config::history_path_for("claude", home.join(".claude").join("projects"));
         collect_jsonl_paths_with_mtime(claude_dir, 2, "claude", &mut file_candidates);
+        cap_history_candidates_for_tool(&mut file_candidates, "claude", HISTORY_LIMIT_PER_TOOL);
 
         // 2. Hermes (sessions/session_*.json — flat directory, JSON format)
         let hermes_dir =
             crate::tool_config::history_path_for("hermes", home.join(".hermes").join("sessions"));
         collect_hermes_paths_with_mtime(hermes_dir, &mut file_candidates);
+        cap_history_candidates_for_tool(&mut file_candidates, "hermes", HISTORY_LIMIT_PER_TOOL);
 
         // 3. Codex (depth 4: sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl)
         let codex_dir =
             crate::tool_config::history_path_for("codex", home.join(".codex").join("sessions"));
         collect_jsonl_paths_with_mtime(codex_dir, 4, "codex", &mut file_candidates);
+        cap_history_candidates_for_tool(&mut file_candidates, "codex", HISTORY_LIMIT_PER_TOOL);
 
         // 4. Gemini (depth 3: tmp/<project-folder>/chats/session-*.jsonl).
         // .json (legacy) files are skipped — collect_jsonl_paths_with_mtime
@@ -3019,6 +3045,7 @@ fn load_native_history_blocking() -> Result<Vec<SavedSession>, String> {
         let gemini_dir =
             crate::tool_config::history_path_for("gemini", home.join(".gemini").join("tmp"));
         collect_jsonl_paths_with_mtime(gemini_dir, 3, "gemini", &mut file_candidates);
+        cap_history_candidates_for_tool(&mut file_candidates, "gemini", HISTORY_LIMIT_PER_TOOL);
 
         // 5. OpenClaw (depth 3: agents/<agentId>/sessions/<sessionId>.jsonl).
         // Format is JSONL same family as Claude/Codex/Gemini — sessions
@@ -3028,6 +3055,7 @@ fn load_native_history_blocking() -> Result<Vec<SavedSession>, String> {
         let openclaw_dir =
             crate::tool_config::history_path_for("openclaw", home.join(".openclaw").join("agents"));
         collect_jsonl_paths_with_mtime(openclaw_dir, 3, "openclaw", &mut file_candidates);
+        cap_history_candidates_for_tool(&mut file_candidates, "openclaw", HISTORY_LIMIT_PER_TOOL);
 
         // 6. Qwen Code (depth 3: projects/<sanitized-cwd>/chats/<session>.jsonl).
         // Gemini-fork format with role + parts on every row + cwd field on
@@ -3036,11 +3064,12 @@ fn load_native_history_blocking() -> Result<Vec<SavedSession>, String> {
         let qwen_dir =
             crate::tool_config::history_path_for("qwen", home.join(".qwen").join("projects"));
         collect_jsonl_paths_with_mtime(qwen_dir, 3, "qwen", &mut file_candidates);
+        cap_history_candidates_for_tool(&mut file_candidates, "qwen", HISTORY_LIMIT_PER_TOOL);
     }
 
-    // Sort candidates by mtime desc and parse only the newest HISTORY_LIMIT.
+    // Sort candidates by mtime desc after per-tool caps. This avoids one noisy
+    // tool's newest files hiding every other tool from the picker.
     file_candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.0));
-    file_candidates.truncate(HISTORY_LIMIT);
 
     // Lazy-load the Gemini project-hash → cwd map only if we actually
     // have Gemini candidates (file I/O isn't free).
@@ -4199,9 +4228,14 @@ pub struct SkillOption {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct McpOption {
     pub id: String,
+    pub name: String,
     pub label: String,
     pub source: String,
     pub config_json: String,
+}
+
+fn mcp_option_id(source: &str, name: &str) -> String {
+    format!("{}:{}", source, name)
 }
 
 #[tauri::command]
@@ -4254,10 +4288,12 @@ pub fn discover_local_mcp_servers() -> Result<Vec<McpOption>, String> {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
                 if let Some(obj) = val.get("mcpServers").and_then(|v| v.as_object()) {
                     for (k, entry) in obj {
+                        let source = ".claude.json";
                         out.push(McpOption {
-                            id: k.clone(),
-                            label: k.clone(),
-                            source: ".claude.json".to_string(),
+                            id: mcp_option_id(source, k),
+                            name: k.clone(),
+                            label: format!("{} ({})", k, source),
+                            source: source.to_string(),
                             config_json: serde_json::to_string(entry)
                                 .unwrap_or_else(|_| "{}".to_string()),
                         });
@@ -4273,10 +4309,12 @@ pub fn discover_local_mcp_servers() -> Result<Vec<McpOption>, String> {
             if let Ok(val) = toml::from_str::<toml::Value>(&body) {
                 if let Some(servers) = val.get("mcp_servers").and_then(|v| v.as_table()) {
                     for (k, entry) in servers {
+                        let source = ".codex/config.toml";
                         out.push(McpOption {
-                            id: k.clone(),
-                            label: k.clone(),
-                            source: ".codex/config.toml".to_string(),
+                            id: mcp_option_id(source, k),
+                            name: k.clone(),
+                            label: format!("{} ({})", k, source),
+                            source: source.to_string(),
                             config_json: serde_json::to_string(entry)
                                 .unwrap_or_else(|_| "{}".to_string()),
                         });
@@ -4286,7 +4324,7 @@ pub fn discover_local_mcp_servers() -> Result<Vec<McpOption>, String> {
         }
     }
 
-    out.sort_by_key(|a| a.label.to_lowercase());
+    out.sort_by_key(|a| (a.name.to_lowercase(), a.source.to_lowercase()));
     out.dedup_by(|a, b| a.id == b.id);
     Ok(out)
 }
@@ -4316,7 +4354,7 @@ fn load_selected_mcp_servers(
         }
         match serde_json::from_str::<serde_json::Value>(&opt.config_json) {
             Ok(value) => {
-                out.insert(opt.id, value);
+                out.insert(opt.name, value);
             }
             Err(e) => {
                 log::warn!(
