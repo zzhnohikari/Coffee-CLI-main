@@ -115,7 +115,6 @@ export function HyperAgentPanel({ hasBg, bgUrl, bgType }: Props) {
         setSetupDismissed(true);
       }, 1500);
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.warn('[hyper-agent] copy failed:', e);
     }
   };

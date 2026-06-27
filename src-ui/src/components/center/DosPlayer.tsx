@@ -194,7 +194,7 @@ export function DosPlayer({ sessionId }: { sessionId: string }) {
         };
         scriptNode.connect(audioCtx.destination);
 
-        const resumeAudio = () => { if (!userMutedRef.current && state.activeTerminalId === sessionId) audioCtx.resume(); };
+        const resumeAudio = () => { if (!userMutedRef.current && isActiveSessionRef.current) audioCtx.resume(); };
         document.addEventListener('click', resumeAudio, { once: true });
         document.addEventListener('keydown', resumeAudio, { once: true });
 

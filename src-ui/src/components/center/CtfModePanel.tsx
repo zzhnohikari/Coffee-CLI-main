@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { commands, waitForTauriBridge, type CtfModeStatus, type MultiAgentPaneProfile, type MultiAgentProfilesConfig, type MultiAgentTeamPreset } from '../../tauri';
-import { useAppState, type AgentStatus, type TerminalSession, type ToolType } from '../../store/app-state';
+import { useAppState, type AgentStatus, type MultiAgentPane, type TerminalSession, type ToolType } from '../../store/app-state';
 import { MultiAgentGrid } from './MultiAgentGrid';
 import { ErrorBoundary } from '../common/ErrorBoundary';
 
@@ -119,6 +119,7 @@ const DEFAULT_PRESET = 'ctf-trio-shell';
 const MAX_TIMELINE_ITEMS = 60;
 const MAX_RESULT_CARDS = 12;
 const MAX_TASK_LEDGER_ITEMS = 24;
+const EMPTY_MULTI_AGENT_PANES: MultiAgentPane[] = [];
 
 function defaultConfig(): CtfModeConfig {
   return {
@@ -798,7 +799,7 @@ export function CtfModePanel({ tab, hasBg, bgUrl, bgType }: Props) {
     return [...required].filter((tool) => toolsInstalled[tool] === false);
   }, [profilesCfg, selectedPreset, toolsInstalled]);
 
-  const isPresetRunnable = (presetId: string): boolean => {
+  const isPresetRunnable = useCallback((presetId: string): boolean => {
     if (!profilesCfg) return false;
     const preset = profilesCfg.teamPresets[presetId];
     if (!preset) return false;
@@ -807,7 +808,7 @@ export function CtfModePanel({ tab, hasBg, bgUrl, bgType }: Props) {
       const tool = profilesCfg.profiles[profileId]?.tool?.trim();
       return !tool || tool === 'shell' || toolsInstalled[tool] !== false;
     });
-  };
+  }, [profilesCfg, toolsInstalled]);
 
   const compatiblePresetId = useMemo(() => {
     if (!profilesCfg) return '';
@@ -817,7 +818,7 @@ export function CtfModePanel({ tab, hasBg, bgUrl, bgType }: Props) {
     return sameLayout.find((id) => isPresetRunnable(id))
       || ctfIds.find((id) => isPresetRunnable(id))
       || '';
-  }, [profilesCfg, toolsInstalled, selectedPreset]);
+  }, [profilesCfg, selectedPreset, isPresetRunnable]);
 
   useEffect(() => {
     if (!profilesCfg) return;
@@ -828,7 +829,7 @@ export function CtfModePanel({ tab, hasBg, bgUrl, bgType }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profilesCfg, toolsInstalled, compatiblePresetId]);
 
-  const teamPanes = tab.multiAgent?.panes || [];
+  const teamPanes = useMemo(() => tab.multiAgent?.panes ?? EMPTY_MULTI_AGENT_PANES, [tab.multiAgent?.panes]);
   const paneCount = paneCountForLayout(selectedPreset?.layout || 'multi-agent');
 
   useEffect(() => {

@@ -106,18 +106,24 @@ function pickInitialCache(): HeatmapCache | null {
 
 export function ContributionHeatmap() {
   const t = useT();
-  // Lazy initializers seed state from cache BEFORE the first render — when
-  // the user switches launchpad ↔ tool tab there's no empty-grid flash
-  // because by paint time the buckets are already populated.
-  const initialCache = pickInitialCache();
-  const initialBuckets = initialCache ? entriesToBuckets(initialCache.entries) : null;
+  // Seed state from cache BEFORE the first render so switching launchpad ↔
+  // tool tab does not flash an empty grid.
+  const [initialState] = useState(() => {
+    const cache = pickInitialCache();
+    const bucketSeed = cache ? entriesToBuckets(cache.entries) : null;
+    return {
+      cacheHit: cache !== null,
+      messages: bucketSeed?.messages ?? new Map<string, number>(),
+      sessions: bucketSeed?.sessions ?? new Map<string, number>(),
+    };
+  });
   const [buckets, setBuckets] = useState<Map<string, number>>(
-    () => initialBuckets?.messages ?? new Map()
+    () => initialState.messages
   );
   const [sessionBuckets, setSessionBuckets] = useState<Map<string, number>>(
-    () => initialBuckets?.sessions ?? new Map()
+    () => initialState.sessions
   );
-  const [loaded, setLoaded] = useState(initialCache !== null);
+  const [loaded, setLoaded] = useState(initialState.cacheHit);
 
   useEffect(() => {
     if (!isTauri) {
@@ -127,7 +133,7 @@ export function ContributionHeatmap() {
     // Cache hit was already handled by the useState lazy init above; if we
     // got here with a hit, skip the API call entirely and don't even spin
     // up cancel state.
-    if (initialCache) return;
+    if (initialState.cacheHit) return;
 
     let cancelled = false;
     const today = localDayKey(new Date());
@@ -147,7 +153,7 @@ export function ContributionHeatmap() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialState.cacheHit]);
 
   const { cells, total, totalMessages, totalSessions } = useMemo(() => {
     const today = new Date();

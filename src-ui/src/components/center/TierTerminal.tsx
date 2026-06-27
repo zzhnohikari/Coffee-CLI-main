@@ -36,6 +36,9 @@ import './TierTerminal.css';
 // color. The 16 ANSI palette stays whatever the active theme provides, so
 // switching schemes only re-tints the text — no full theme swap, no style
 // shift. The chip's own swatch in the picker reuses the same fg value.
+const MAX_HIDDEN_OUTPUT_BYTES = 512 * 1024;
+const HIDDEN_FLUSH_CHUNK_BYTES = 64 * 1024;
+
 export interface TermColorScheme {
   id: string;
   fg: string;
@@ -246,9 +249,6 @@ function TierTerminalImpl({
   // typically arrives first with the real exit code; reader-EOF onStatus
   // then arrives with a hardcoded 0 and correctly becomes a no-op.
   const exitMessageWrittenRef = useRef(false);
-
-  const MAX_HIDDEN_OUTPUT_BYTES = 512 * 1024;
-  const HIDDEN_FLUSH_CHUNK_BYTES = 64 * 1024;
 
   const isTerminalActuallyVisible = useCallback(() => {
     const el = wrapRef.current;
@@ -940,7 +940,7 @@ function TierTerminalImpl({
       }
     }, 150);
     return () => clearInterval(poll);
-  }, [showSplash, processExited, startFailed]);
+  }, [showSplash, processExited, startFailed, tool]);
 
   // ── Render ───────────────────────────────────────────────────────────────
 

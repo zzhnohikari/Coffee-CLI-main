@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { commands } from '../../tauri';
 import './FileEditorModal.css';
@@ -25,15 +25,15 @@ export function FileEditorModal() {
 
   const dirty = useMemo(() => content !== originalContent, [content, originalContent]);
 
-  const closeEditor = () => {
+  const closeEditor = useCallback(() => {
     if (dirty && !window.confirm('当前文件有未保存修改，确认关闭吗？')) return;
     setIsOpen(false);
     setStatus('idle');
     setSaving(false);
     setErrorMsg('');
-  };
+  }, [dirty]);
 
-  const loadFile = async (path: string) => {
+  const loadFile = useCallback(async (path: string) => {
     setIsOpen(true);
     setFilePath(path);
     setStatus('loading');
@@ -50,9 +50,9 @@ export function FileEditorModal() {
       setStatus('error');
       setErrorMsg(err instanceof Error ? err.message : String(err));
     }
-  };
+  }, []);
 
-  const saveFile = async () => {
+  const saveFile = useCallback(async () => {
     if (!filePath || saving || !dirty) return;
     setSaving(true);
     setErrorMsg('');
@@ -67,7 +67,7 @@ export function FileEditorModal() {
     } finally {
       setSaving(false);
     }
-  };
+  }, [content, dirty, filePath, saving]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -82,7 +82,7 @@ export function FileEditorModal() {
     };
     window.addEventListener('coffee-open-file', handler);
     return () => window.removeEventListener('coffee-open-file', handler);
-  }, [dirty, filePath]);
+  }, [dirty, filePath, loadFile]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -98,7 +98,7 @@ export function FileEditorModal() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isOpen, saving, dirty, content, filePath]);
+  }, [isOpen, closeEditor, saveFile]);
 
   if (!isOpen) return null;
 
