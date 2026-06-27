@@ -589,7 +589,7 @@ function BrowserDirNode({ name, dirPath, icon, onCtxMenu }: { name: string; dirP
       try {
         await commands.fsRename(absPath, renameVal.trim());
         // Notify parent directory to refresh
-        const parentDir = absPath.replace(/\/[^\/]+$/, '');
+        const parentDir = absPath.replace(/\/[^/]+$/, '');
         dispatchFsRefresh(parentDir);
       } catch (e) { console.error('[Explorer] rename failed:', e); }
     }
@@ -1158,7 +1158,10 @@ export function Explorer() {
             dispatch({ type: 'CLEAR_BG' });
           }}
           onSelectScheme={(id) => {
-            try { id ? localStorage.setItem('cc-term-scheme', id) : localStorage.removeItem('cc-term-scheme'); } catch {}
+            try {
+              if (id) localStorage.setItem('cc-term-scheme', id);
+              else localStorage.removeItem('cc-term-scheme');
+            } catch {}
             dispatch({ type: 'SET_TERM_SCHEME', scheme: id });
           }}
           onSetWallpaperDim={(n) => dispatch({ type: 'SET_WALLPAPER_DIM', dim: n })}

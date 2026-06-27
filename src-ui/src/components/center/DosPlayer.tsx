@@ -167,7 +167,7 @@ export function DosPlayer({ sessionId }: { sessionId: string }) {
         const audioCtx = new AudioContext({ sampleRate: ci.soundFrequency() || 44100 });
         audioCtxRef.current = audioCtx;
         const bufferSize = 2048;
-        let audioQueue: Float32Array[] = [];
+        const audioQueue: Float32Array[] = [];
 
         ci.events().onSoundPush((samples: Float32Array) => {
           audioQueue.push(new Float32Array(samples));

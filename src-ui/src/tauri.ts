@@ -393,15 +393,13 @@ export interface MultiAgentProfilesConfig {
 
 export interface SkillOption {
   id: string;
-  name: string;
-  label?: string;
+  label: string;
   path: string;
 }
 
 export interface McpOption {
   id: string;
-  name: string;
-  label?: string;
-  transport: string;
-  path?: string;
+  label: string;
+  source: string;
+  config_json: string;
 }
