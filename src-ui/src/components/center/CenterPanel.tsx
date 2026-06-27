@@ -1,12 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { Suspense, lazy, useState, useEffect, useRef } from 'react';
 import { focusTerminal } from '../../lib/focus-registry';
-import { TierTerminal } from './TierTerminal';
-import { DosPlayer } from './DosPlayer';
-import { ChatReader } from './ChatReader';
-import { MultiAgentGrid } from './MultiAgentGrid';
-import { FourSplitGrid } from './FourSplitGrid';
-import { HyperAgentPanel } from './HyperAgentPanel';
-import { CtfModePanel } from './CtfModePanel';
 import { ToolConfigModal } from './ToolConfigModal';
 import { ContributionHeatmap } from './ContributionHeatmap';
 import { ErrorBoundary } from '../common/ErrorBoundary';
@@ -23,6 +16,14 @@ import { isTauri, commands } from '../../tauri';
 import { useT } from '../../i18n/useT';
 import { fetchGameCatalog, type RemoteGameEntry } from '../../utils/game-catalog';
 import './CenterPanel.css';
+
+const TierTerminal = lazy(() => import('./TierTerminal').then((module) => ({ default: module.TierTerminal })));
+const DosPlayer = lazy(() => import('./DosPlayer').then((module) => ({ default: module.DosPlayer })));
+const ChatReader = lazy(() => import('./ChatReader').then((module) => ({ default: module.ChatReader })));
+const MultiAgentGrid = lazy(() => import('./MultiAgentGrid').then((module) => ({ default: module.MultiAgentGrid })));
+const FourSplitGrid = lazy(() => import('./FourSplitGrid').then((module) => ({ default: module.FourSplitGrid })));
+const HyperAgentPanel = lazy(() => import('./HyperAgentPanel').then((module) => ({ default: module.HyperAgentPanel })));
+const CtfModePanel = lazy(() => import('./CtfModePanel').then((module) => ({ default: module.CtfModePanel })));
 
 // Tool icon assets bundled inline by Vite. PNGs use ?inline → base64 data URI;
 // SVGs use ?raw → string for dangerouslySetInnerHTML rendering. Both flows
@@ -1162,102 +1163,104 @@ export function CenterPanel() {
               position: 'relative'
             }}
           >
-            {t.tool === 'history' ? (
-              <ChatReader sessionId={t.id} />
-            ) : t.tool === 'arcade' ? (
-              <DosPlayer sessionId={t.id} />
-            ) : t.tool === 'multi-agent' ? (
-              // Independent four-pane peer mode. Standalone Tab type —
-              // does not share layout with the single-terminal path
-              // below. Every pane is a peer; any CLI can drive the
-              // others via coffee-cli MCP tools.
-              <MultiAgentGrid
-                tab={t}
-                hasBg={hasBg}
-                bgUrl={bgUrl}
-                bgType={bgType}
-                isTabActive={t.id === activeTerminalId}
-              />
-            ) : t.tool === 'two-agent' ? (
-              <MultiAgentGrid
-                tab={t}
-                hasBg={hasBg}
-                bgUrl={bgUrl}
-                bgType={bgType}
-                paneCount={2}
-                isTabActive={t.id === activeTerminalId}
-              />
-            ) : t.tool === 'three-agent' ? (
-              <MultiAgentGrid
-                tab={t}
-                hasBg={hasBg}
-                bgUrl={bgUrl}
-                bgType={bgType}
-                paneCount={3}
-                isTabActive={t.id === activeTerminalId}
-              />
-            ) : t.tool === 'two-split' ? (
-              <FourSplitGrid
-                tab={t}
-                hasBg={hasBg}
-                bgUrl={bgUrl}
-                bgType={bgType}
-                paneCount={2}
-                isTabActive={t.id === activeTerminalId}
-              />
-            ) : t.tool === 'three-split' ? (
-              <FourSplitGrid
-                tab={t}
-                hasBg={hasBg}
-                bgUrl={bgUrl}
-                bgType={bgType}
-                paneCount={3}
-                isTabActive={t.id === activeTerminalId}
-              />
-            ) : t.tool === 'four-split' ? (
-              // Independent Quad: same 2×2 pane grid as multi-agent but
-              // with zero MCP coordination — panes cannot observe or
-              // drive each other.
-              <FourSplitGrid
-                tab={t}
-                hasBg={hasBg}
-                bgUrl={bgUrl}
-                bgType={bgType}
-                paneCount={4}
-                isTabActive={t.id === activeTerminalId}
-              />
-            ) : t.tool === 'hyper-agent' ? (
-              <HyperAgentPanel
-                hasBg={hasBg}
-                bgUrl={bgUrl}
-                bgType={bgType}
-              />
-            ) : t.tool === 'ctf-mode' ? (
-              <CtfModePanel
-                tab={t}
-                hasBg={hasBg}
-                bgUrl={bgUrl}
-                bgType={bgType}
-              />
-            ) : (
-              <ErrorBoundary key={`err-${t.id}-${t.restartKey || 0}`} fallbackLabel="Tier Terminal Error">
-                <TierTerminal
-                  key={`tier-${t.id}-${t.restartKey || 0}`}
-                  sessionId={t.id}
-                  tool={t.tool}
-                  toolName={AGENT_CATALOG.find(a => a.key === t.tool)?.label}
-                  theme={state.currentTheme}
-                  lang={state.currentLang}
-                  isActive={t.id === activeTerminalId}
-                  toolData={t.toolData}
-                  folderPath={t.folderPath}
+            <Suspense fallback={null}>
+              {t.tool === 'history' ? (
+                <ChatReader sessionId={t.id} />
+              ) : t.tool === 'arcade' ? (
+                <DosPlayer sessionId={t.id} />
+              ) : t.tool === 'multi-agent' ? (
+                // Independent four-pane peer mode. Standalone Tab type —
+                // does not share layout with the single-terminal path
+                // below. Every pane is a peer; any CLI can drive the
+                // others via coffee-cli MCP tools.
+                <MultiAgentGrid
+                  tab={t}
                   hasBg={hasBg}
                   bgUrl={bgUrl}
                   bgType={bgType}
-                  termColorScheme={state.termColorScheme}
+                  isTabActive={t.id === activeTerminalId}
                 />
-              </ErrorBoundary>
-            )}
+              ) : t.tool === 'two-agent' ? (
+                <MultiAgentGrid
+                  tab={t}
+                  hasBg={hasBg}
+                  bgUrl={bgUrl}
+                  bgType={bgType}
+                  paneCount={2}
+                  isTabActive={t.id === activeTerminalId}
+                />
+              ) : t.tool === 'three-agent' ? (
+                <MultiAgentGrid
+                  tab={t}
+                  hasBg={hasBg}
+                  bgUrl={bgUrl}
+                  bgType={bgType}
+                  paneCount={3}
+                  isTabActive={t.id === activeTerminalId}
+                />
+              ) : t.tool === 'two-split' ? (
+                <FourSplitGrid
+                  tab={t}
+                  hasBg={hasBg}
+                  bgUrl={bgUrl}
+                  bgType={bgType}
+                  paneCount={2}
+                  isTabActive={t.id === activeTerminalId}
+                />
+              ) : t.tool === 'three-split' ? (
+                <FourSplitGrid
+                  tab={t}
+                  hasBg={hasBg}
+                  bgUrl={bgUrl}
+                  bgType={bgType}
+                  paneCount={3}
+                  isTabActive={t.id === activeTerminalId}
+                />
+              ) : t.tool === 'four-split' ? (
+                // Independent Quad: same 2×2 pane grid as multi-agent but
+                // with zero MCP coordination — panes cannot observe or
+                // drive each other.
+                <FourSplitGrid
+                  tab={t}
+                  hasBg={hasBg}
+                  bgUrl={bgUrl}
+                  bgType={bgType}
+                  paneCount={4}
+                  isTabActive={t.id === activeTerminalId}
+                />
+              ) : t.tool === 'hyper-agent' ? (
+                <HyperAgentPanel
+                  hasBg={hasBg}
+                  bgUrl={bgUrl}
+                  bgType={bgType}
+                />
+              ) : t.tool === 'ctf-mode' ? (
+                <CtfModePanel
+                  tab={t}
+                  hasBg={hasBg}
+                  bgUrl={bgUrl}
+                  bgType={bgType}
+                />
+              ) : (
+                <ErrorBoundary key={`err-${t.id}-${t.restartKey || 0}`} fallbackLabel="Tier Terminal Error">
+                  <TierTerminal
+                    key={`tier-${t.id}-${t.restartKey || 0}`}
+                    sessionId={t.id}
+                    tool={t.tool}
+                    toolName={AGENT_CATALOG.find(a => a.key === t.tool)?.label}
+                    theme={state.currentTheme}
+                    lang={state.currentLang}
+                    isActive={t.id === activeTerminalId}
+                    toolData={t.toolData}
+                    folderPath={t.folderPath}
+                    hasBg={hasBg}
+                    bgUrl={bgUrl}
+                    bgType={bgType}
+                    termColorScheme={state.termColorScheme}
+                  />
+                </ErrorBoundary>
+              )}
+            </Suspense>
           </div>
         ) : null)}
 
