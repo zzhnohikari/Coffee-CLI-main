@@ -86,6 +86,17 @@ function launchToolForProfileTool(tool?: string): ToolType {
   return ((tool as ToolType) || null);
 }
 
+function mcpOptionSupportsTool(mcp: McpOption, tool?: string | null): boolean {
+  const normalized = (tool || '').trim().toLowerCase();
+  if (!normalized) return true;
+  return (mcp.tools || []).includes(normalized);
+}
+
+function isMcpSelected(selectedIds: string[] | undefined, mcp: McpOption): boolean {
+  const selected = new Set(selectedIds || []);
+  return selected.has(mcp.id) || selected.has(mcp.name);
+}
+
 function isGeneratedProfileMcpPath(path?: string | null): boolean {
   const normalized = (path || '').replace(/\\/g, '/');
   return normalized.includes('/coffee-cli/profile-mcp/');
@@ -471,6 +482,11 @@ function EmptyPanePicker({
     return Object.entries(profilesCfg.profiles || {}).filter(([, profile]) => profile.tool === profileTool);
   }, [profileTool, profilesCfg]);
 
+  const filteredMcpOptions = useMemo(
+    () => mcpOptions.filter((mcp) => mcpOptionSupportsTool(mcp, profileTool)),
+    [mcpOptions, profileTool],
+  );
+
   const resetProfileEditor = () => {
     setEditingProfileId('');
     setDraftProfileId('');
@@ -527,7 +543,7 @@ function EmptyPanePicker({
     if (!draftProfile) return;
     setDraftProfile({
       ...draftProfile,
-      selectedMcpIds: selected ? mcpOptions.map((mcp) => mcp.id) : [],
+      selectedMcpIds: selected ? filteredMcpOptions.map((mcp) => mcp.id) : [],
     });
   };
 
@@ -785,8 +801,8 @@ function EmptyPanePicker({
                       </div>
                       <input type="text" className="empty-pane-history-search" value={draftProfile.mcpConfigPath} placeholder={t('profile.mcp_config_path' as any)} onChange={(e) => setDraftProfile({ ...draftProfile, mcpConfigPath: e.target.value })} />
                       <div className="empty-pane-profile-pills empty-pane-profile-pills--scroll">
-                        {mcpOptions.map((mcp) => {
-                          const checked = (draftProfile.selectedMcpIds || []).includes(mcp.id);
+                        {filteredMcpOptions.map((mcp) => {
+                          const checked = isMcpSelected(draftProfile.selectedMcpIds, mcp);
                           return (
                             <label key={mcp.id} className={`empty-pane-profile-pill ${checked ? 'is-selected' : ''}`}>
                               <input
@@ -795,8 +811,11 @@ function EmptyPanePicker({
                                 onChange={(e) => setDraftProfile({
                                   ...draftProfile,
                                   selectedMcpIds: e.target.checked
-                                    ? [...(draftProfile.selectedMcpIds || []), mcp.id]
-                                    : (draftProfile.selectedMcpIds || []).filter((x) => x !== mcp.id),
+                                    ? [
+                                        ...(draftProfile.selectedMcpIds || []).filter((x) => x !== mcp.id && x !== mcp.name),
+                                        mcp.id,
+                                      ]
+                                    : (draftProfile.selectedMcpIds || []).filter((x) => x !== mcp.id && x !== mcp.name),
                                 })}
                               />
                               <span>{mcp.label}</span>

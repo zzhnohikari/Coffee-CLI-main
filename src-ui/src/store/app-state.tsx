@@ -101,6 +101,7 @@ export interface AppState {
   // Terminals
   terminals: TerminalSession[];
   activeTerminalId: string | null;
+  recentFolders: string[];
 
   // Gambit (global floating compose window). Visibility is app-wide so the
   // panel doesn't appear/disappear when switching tabs; only the draft is
@@ -172,11 +173,16 @@ function reducer(state: AppState, action: Action): AppState {
     case 'SET_FOLDER':
       // Persist as the "last folder" so a fresh launch lands here instead
       // of the C-drive default. Read back in getInitialState().
-      try { localStorage.setItem('cc-folder', action.path); } catch {}
-      return {
-        ...state,
-        terminals: state.terminals.map(t => t.id === state.activeTerminalId ? { ...t, folderPath: action.path } : t)
-      };
+      {
+        const path = normalizeFolderPath(action.path);
+        try { localStorage.setItem('cc-folder', path); } catch {}
+        const recentFolders = pushRecentFolder(state.recentFolders, path);
+        return {
+          ...state,
+          recentFolders,
+          terminals: state.terminals.map(t => t.id === state.activeTerminalId ? { ...t, folderPath: path } : t)
+        };
+      }
     case 'CLEAR_FOLDER':
       try { localStorage.removeItem('cc-folder'); } catch {}
       return {
@@ -446,6 +452,42 @@ const VALID_ICON_THEMES: IconTheme[] = [
   'devicon', 'fluent', 'symbols', 'coffee',
 ];
 
+const RECENT_FOLDERS_KEY = 'cc-recent-folders';
+const RECENT_FOLDERS_LIMIT = 10;
+
+function normalizeFolderPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return '';
+  return trimmed.replace(/\\/g, '/').replace(/\/+$/, '') || trimmed;
+}
+
+function pushRecentFolder(recentFolders: string[], path: string): string[] {
+  const normalized = normalizeFolderPath(path);
+  if (!normalized) return recentFolders;
+  const next = [
+    normalized,
+    ...recentFolders.filter(p => normalizeFolderPath(p) !== normalized),
+  ].slice(0, RECENT_FOLDERS_LIMIT);
+  try { localStorage.setItem(RECENT_FOLDERS_KEY, JSON.stringify(next)); } catch {}
+  return next;
+}
+
+function loadRecentFolders(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_FOLDERS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((p): p is string => typeof p === 'string' && normalizeFolderPath(p).length > 0)
+      .map(normalizeFolderPath)
+      .filter((p, idx, arr) => arr.indexOf(p) === idx)
+      .slice(0, RECENT_FOLDERS_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
 function getInitialState(): AppState {
   let theme: ThemeColor = 'dark';
   let shape: ThemeShape = 'panel';
@@ -468,7 +510,13 @@ function getInitialState(): AppState {
     if (savedIconTheme && VALID_ICON_THEMES.includes(savedIconTheme)) iconTheme = savedIconTheme;
   } catch {}
 
-  try { folderPath = localStorage.getItem('cc-folder'); } catch {}
+  try {
+    const savedFolder = localStorage.getItem('cc-folder');
+    folderPath = savedFolder ? normalizeFolderPath(savedFolder) : null;
+  } catch {}
+  const recentFolders = folderPath
+    ? pushRecentFolder(loadRecentFolders(), folderPath)
+    : loadRecentFolders();
 
   try {
     const savedLang = localStorage.getItem('cc-lang');
@@ -536,6 +584,7 @@ function getInitialState(): AppState {
     termColorScheme,
     terminals: [{ id: defaultTerminalId, tool: null, folderPath }],
     activeTerminalId: defaultTerminalId,
+    recentFolders,
     gambitOpen: false,
     leftPanelHidden,
     rightPanelHidden,

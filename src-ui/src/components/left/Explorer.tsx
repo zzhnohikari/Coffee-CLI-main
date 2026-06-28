@@ -284,6 +284,91 @@ function LangDropdown({ anchorRef, currentLang, onSelect, onClose }: {
   );
 }
 
+function formatWorkspaceName(path: string): string {
+  const parts = path.replace(/\\/g, '/').split('/').filter(Boolean);
+  return parts[parts.length - 1] || path;
+}
+
+function formatWorkspaceParent(path: string): string {
+  const norm = path.replace(/\\/g, '/').replace(/\/+$/, '');
+  const idx = norm.lastIndexOf('/');
+  if (idx <= 0) return norm;
+  return norm.slice(0, idx);
+}
+
+function RecentWorkspaceDropdown({ anchorRef, folders, currentFolder, currentLang, onSelect, onClose }: {
+  anchorRef: React.RefObject<HTMLButtonElement | null>;
+  folders: string[];
+  currentFolder: string | null;
+  currentLang: string;
+  onSelect: (path: string) => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose();
+    };
+    const closeKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', closeKey);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', closeKey);
+    };
+  }, [onClose]);
+
+  const rect = anchorRef.current?.getBoundingClientRect();
+  const style: React.CSSProperties = {
+    position: 'fixed',
+    top: rect ? rect.bottom + 6 : 0,
+    left: rect ? Math.max(8, rect.right - 280) : 0,
+    width: 280,
+    maxWidth: 'calc(100vw - 16px)',
+  };
+  const label = currentLang === 'zh-CN' || currentLang === 'zh-TW'
+    ? '最近工作区'
+    : 'Recent workspaces';
+  const emptyText = currentLang === 'zh-CN' || currentLang === 'zh-TW'
+    ? '暂无最近工作区'
+    : 'No recent workspaces';
+
+  return createPortal(
+    <div className="ctx-menu recent-workspace-menu" ref={menuRef} style={style}>
+      <div className="recent-list">
+        <div className="recent-label">{label}</div>
+        {folders.length === 0 ? (
+          <div className="recent-workspace-empty">{emptyText}</div>
+        ) : (
+          folders.map(path => {
+            const active = currentFolder === path;
+            return (
+              <button
+                key={path}
+                className={`recent-item recent-folder-item ${active ? 'active' : ''}`}
+                onClick={() => onSelect(path)}
+              >
+                <span className="recent-item-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                  </svg>
+                </span>
+                <span className="recent-item-info">
+                  <span className="recent-item-name">{formatWorkspaceName(path)}</span>
+                  <span className="recent-item-path">{formatWorkspaceParent(path)}</span>
+                </span>
+                {active && <span className="recent-workspace-active-dot" />}
+              </button>
+            );
+          })
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // ─── Theme Menu (color × shape) ──────────────────────────────────────────────
 
 const THEME_COLORS: { code: ThemeColor; labelKey: string; swatch: string; ring: string }[] = [
@@ -801,30 +886,9 @@ export function Explorer() {
   const [langDropdownOpen, setLangDropdownOpen] = useState(false);
   const langBtnRef = useRef<HTMLButtonElement>(null);
 
-  // Update check
-  const [hasUpdate, setHasUpdate] = useState(false);
-  useEffect(() => {
-    const checkUpdate = async () => {
-      try {
-        const { getVersion } = await import('@tauri-apps/api/app');
-        const [local, remote] = await Promise.all([
-          getVersion(),
-          fetch('https://coffeecli.com/version.json').then(r => r.json()),
-        ]);
-        const isNewer = (r: string, l: string) => {
-          const rv = r.split('.').map(Number);
-          const lv = l.split('.').map(Number);
-          for (let i = 0; i < 3; i++) {
-            if ((rv[i] ?? 0) > (lv[i] ?? 0)) return true;
-            if ((rv[i] ?? 0) < (lv[i] ?? 0)) return false;
-          }
-          return false;
-        };
-        if (remote?.version && isNewer(remote.version, local)) setHasUpdate(true);
-      } catch { /* offline or fetch failed — silent */ }
-    };
-    checkUpdate();
-  }, []);
+  // Recent workspace dropdown state
+  const [recentWorkspaceOpen, setRecentWorkspaceOpen] = useState(false);
+  const recentWorkspaceBtnRef = useRef<HTMLButtonElement>(null);
 
   const [activeTab, setActiveTab] = useState<'workspace' | 'computer'>('workspace');
   const [drives, setDrives] = useState<DriveInfo[]>([]);
@@ -836,26 +900,32 @@ export function Explorer() {
     }
   }, [state.activeTerminalId, activeSession?.tool]);
 
+  const switchWorkspace = useCallback((path: string) => {
+    const activeTerminalId = state.activeTerminalId;
+    const tool = activeSession?.tool;
+    if (activeTerminalId && tool) {
+      // 1. Update this tab's folderPath so the restarted terminal knows its CWD
+      dispatch({ type: 'SET_FOLDER', path });
+
+      // 2. Force unmount-remount of the TierTerminal to restart the Agent in the new dir
+      dispatch({ type: 'RESTART_TERMINAL', id: activeTerminalId, newId: crypto.randomUUID() });
+    }
+  }, [activeSession?.tool, dispatch, state.activeTerminalId]);
+
   const handleOpenFolder = async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
       const { open } = await import('@tauri-apps/plugin-dialog');
       const selected = await open({ directory: true });
-      if (selected && typeof selected === 'string') {
-        const activeTerminalId = state.activeTerminalId;
-        const tool = activeSession?.tool;
-
-        if (activeTerminalId && tool) {
-          // 1. Update this tab's folderPath so the restarted terminal knows its CWD
-          dispatch({ type: 'SET_FOLDER', path: selected });
-
-          // 2. Force unmount-remount of the TierTerminal to restart the Agent in the new dir
-          dispatch({ type: 'RESTART_TERMINAL', id: activeTerminalId, newId: crypto.randomUUID() });
-        }
-      }
+      if (selected && typeof selected === 'string') switchWorkspace(selected);
     } catch (err) {
       console.error('[Explorer] Failed to open folder:', err);
     }
+  };
+
+  const handleOpenRecentWorkspace = (path: string) => {
+    setRecentWorkspaceOpen(false);
+    switchWorkspace(path);
   };
 
   // Load drives when the "My Computer" tab is activated
@@ -941,18 +1011,6 @@ export function Explorer() {
             <path fill="currentColor" d="M0 0h24v24H0z" mask="url(#brandIconMask)"/>
           </svg>
           <span>{t('app.title')}</span>
-          {hasUpdate && (
-            <button
-              className="icon-btn xs update-check-btn update-available"
-              onClick={() => commands.openUrl('https://coffeecli.com')}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="7 10 12 15 17 10"/>
-                <line x1="12" y1="3" x2="12" y2="15"/>
-              </svg>
-            </button>
-          )}
         </div>
         
         <div className="window-controls">
@@ -1013,19 +1071,36 @@ export function Explorer() {
       </div>
 
       {(activeTab === 'workspace' && activeSession?.tool && !CWD_AGNOSTIC_TOOLS.has(activeSession.tool)) && (
-        <button
-          className="workspace-dir-btn"
-          onClick={handleOpenFolder}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-            <path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"></path>
-          </svg>
-          <span className="workspace-dir-path">
-            {activeSession.folderPath
-              ? `⁦${activeSession.folderPath}⁩`
-              : t('explorer.workspace.select-dir' as any)}
-          </span>
-        </button>
+        <div className="workspace-dir-row">
+          <button
+            className="workspace-dir-btn"
+            onClick={handleOpenFolder}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            <span className="workspace-dir-path">
+              {activeSession.folderPath
+                ? `⁦${activeSession.folderPath}⁩`
+                : t('explorer.workspace.select-dir' as any)}
+            </span>
+          </button>
+          <button
+            ref={recentWorkspaceBtnRef}
+            className={`workspace-recent-btn ${recentWorkspaceOpen ? 'active' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setRecentWorkspaceOpen(v => !v);
+            }}
+            title={state.currentLang === 'zh-CN' ? '最近工作区' : 'Recent workspaces'}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 3v5h5"/>
+              <path d="M3.05 13A9 9 0 1 0 5.64 6.64L3 8"/>
+              <path d="M12 7v5l3 2"/>
+            </svg>
+          </button>
+        </div>
       )}
 
       {/* File list Content */}
@@ -1105,6 +1180,18 @@ export function Explorer() {
 
       {/* Right-click context menu */}
       {ctxMenu && <ContextMenu menu={ctxMenu} onClose={closeCtxMenu} />}
+
+      {/* Recent workspaces */}
+      {recentWorkspaceOpen && (
+        <RecentWorkspaceDropdown
+          anchorRef={recentWorkspaceBtnRef}
+          folders={state.recentFolders}
+          currentFolder={folderPath}
+          currentLang={state.currentLang}
+          onSelect={handleOpenRecentWorkspace}
+          onClose={() => setRecentWorkspaceOpen(false)}
+        />
+      )}
 
       {/* Language dropdown */}
       {langDropdownOpen && (

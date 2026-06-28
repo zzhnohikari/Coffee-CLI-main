@@ -37,6 +37,88 @@ YELLOW=$(printf '\033[0;33m')
 RED=$(printf '\033[0;31m')
 RESET=$(printf '\033[0m')
 
+install_macos_launcher() {
+  APP_PATH="/Applications/Coffee CLI.app"
+  if [ ! -d "$APP_PATH" ]; then
+    echo "  ${YELLOW}Skipping terminal launcher registration: $APP_PATH not found.${RESET}"
+    return 0
+  fi
+
+  WRAPPER_TMP="$(mktemp /tmp/coffee-cli-launcher.XXXXXX)"
+  cat > "$WRAPPER_TMP" <<'EOF'
+#!/bin/sh
+APP_PATH="/Applications/Coffee CLI.app"
+APP_BIN=""
+
+if [ -x "$APP_PATH/Contents/MacOS/coffee-cli" ]; then
+  APP_BIN="$APP_PATH/Contents/MacOS/coffee-cli"
+elif [ -d "$APP_PATH/Contents/MacOS" ]; then
+  APP_BIN="$(find "$APP_PATH/Contents/MacOS" -maxdepth 1 -type f -perm -111 2>/dev/null | head -n 1)"
+fi
+
+if [ "$#" -eq 0 ]; then
+  if [ -d "$APP_PATH" ]; then
+    exec open -a "$APP_PATH"
+  fi
+  if [ -n "$APP_BIN" ] && [ -x "$APP_BIN" ]; then
+    exec "$APP_BIN"
+  fi
+  echo "Coffee CLI app not found in /Applications." >&2
+  exit 1
+fi
+
+if [ -n "$APP_BIN" ] && [ -x "$APP_BIN" ]; then
+  exec "$APP_BIN" "$@"
+fi
+
+echo "Coffee CLI app not found in /Applications." >&2
+exit 1
+EOF
+  chmod 755 "$WRAPPER_TMP"
+
+  TARGET_DIR=""
+  for dir in "/opt/homebrew/bin" "/usr/local/bin"; do
+    if [ -d "$dir" ] && [ -w "$dir" ]; then
+      TARGET_DIR="$dir"
+      break
+    fi
+  done
+
+  if [ -z "$TARGET_DIR" ]; then
+    if [ -d "/opt/homebrew/bin" ]; then
+      TARGET_DIR="/opt/homebrew/bin"
+    elif [ -d "/usr/local/bin" ]; then
+      TARGET_DIR="/usr/local/bin"
+    fi
+  fi
+
+  if [ -n "$TARGET_DIR" ]; then
+    TARGET="$TARGET_DIR/coffee-cli"
+    if [ -w "$TARGET_DIR" ]; then
+      install -m 755 "$WRAPPER_TMP" "$TARGET"
+    elif command -v sudo > /dev/null 2>&1; then
+      sudo install -m 755 "$WRAPPER_TMP" "$TARGET"
+    else
+      mkdir -p "$HOME/.local/bin"
+      install -m 755 "$WRAPPER_TMP" "$HOME/.local/bin/coffee-cli"
+      echo "  ${YELLOW}Installed terminal launcher to ~/.local/bin/coffee-cli.${RESET}"
+      echo "  ${YELLOW}Add ~/.local/bin to PATH if it is not already visible in your shell.${RESET}"
+      rm -f "$WRAPPER_TMP"
+      return 0
+    fi
+
+    echo "  ${GREEN}Registered terminal launcher: $TARGET${RESET}"
+    rm -f "$WRAPPER_TMP"
+    return 0
+  fi
+
+  mkdir -p "$HOME/.local/bin"
+  install -m 755 "$WRAPPER_TMP" "$HOME/.local/bin/coffee-cli"
+  echo "  ${YELLOW}Installed terminal launcher to ~/.local/bin/coffee-cli.${RESET}"
+  echo "  ${YELLOW}Add ~/.local/bin to PATH if it is not already visible in your shell.${RESET}"
+  rm -f "$WRAPPER_TMP"
+}
+
 echo ""
 echo "  ${CYAN}Coffee CLI Installer${RESET}"
 echo "  ${GRAY}────────────────────${RESET}"
@@ -260,6 +342,7 @@ if [ "$OS" = "Darwin" ]; then
   echo ""
   echo "  ${GREEN}Done! Coffee CLI v$LATEST_VER installed.${RESET}"
   echo "  ${GRAY}Launch it from /Applications or Spotlight.${RESET}"
+  install_macos_launcher
 
 # ── Linux ──────────────────────────────────────────────────────────────────────
 elif [ "$OS" = "Linux" ]; then

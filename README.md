@@ -127,6 +127,7 @@ irm https://raw.githubusercontent.com/edison7009/Coffee-CLI/main/install/install
 ```bash
 curl -fsSL https://raw.githubusercontent.com/edison7009/Coffee-CLI/main/install/install.sh | sh
 ```
+安装后可直接在终端运行 `coffee-cli`，也可从 `/Applications` 或 Spotlight 打开。
 
 **Linux** (Debian / Ubuntu / AppImage)
 ```bash

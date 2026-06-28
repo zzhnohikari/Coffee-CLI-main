@@ -985,7 +985,7 @@ async fn tier_terminal_start(
         .unwrap_or_default();
     let extra_mcp_servers = pane_launch_payload
         .as_ref()
-        .map(load_profile_mcp_servers)
+        .map(|payload| load_profile_mcp_servers(payload, tool.as_deref().unwrap_or("")))
         .unwrap_or_default();
     let selected_skills = pane_launch_payload
         .as_ref()
@@ -3447,7 +3447,7 @@ fn tier_terminal_resume(
         .unwrap_or_default();
     let extra_mcp_servers = pane_launch_payload
         .as_ref()
-        .map(load_profile_mcp_servers)
+        .map(|payload| load_profile_mcp_servers(payload, &tool))
         .unwrap_or_default();
     let selected_skills = pane_launch_payload
         .as_ref()
@@ -4231,6 +4231,7 @@ pub struct McpOption {
     pub name: String,
     pub label: String,
     pub source: String,
+    pub tools: Vec<String>,
     pub config_json: String,
 }
 
@@ -4238,8 +4239,22 @@ fn mcp_option_id(source: &str, name: &str) -> String {
     format!("{}:{}", source, name)
 }
 
-fn mcp_option_is_selected(selected: &HashSet<String>, opt: &McpOption) -> bool {
-    selected.contains(&opt.id) || selected.contains(&opt.name)
+fn mcp_source_tools(source: &str) -> Vec<String> {
+    match source {
+        ".claude.json" => vec!["claude".to_string()],
+        ".codex/config.toml" => vec!["codex".to_string()],
+        _ => Vec::new(),
+    }
+}
+
+fn mcp_option_supports_tool(opt: &McpOption, tool: &str) -> bool {
+    let normalized = tool.trim().to_lowercase();
+    normalized.is_empty() || opt.tools.iter().any(|t| t == &normalized)
+}
+
+fn mcp_option_is_selected(selected: &HashSet<String>, opt: &McpOption, tool: &str) -> bool {
+    mcp_option_supports_tool(opt, tool)
+        && (selected.contains(&opt.id) || selected.contains(&opt.name))
 }
 
 #[cfg(test)]
@@ -4253,6 +4268,7 @@ mod mcp_selection_tests {
             name: name.to_string(),
             label: name.to_string(),
             source: ".claude.json".to_string(),
+            tools: vec!["claude".to_string()],
             config_json: "{}".to_string(),
         }
     }
@@ -4267,7 +4283,8 @@ mod mcp_selection_tests {
 
         assert!(mcp_option_is_selected(
             &selected(&[".claude.json:chrome-mcp-server"]),
-            &opt
+            &opt,
+            "claude",
         ));
     }
 
@@ -4277,7 +4294,8 @@ mod mcp_selection_tests {
 
         assert!(mcp_option_is_selected(
             &selected(&["chrome-mcp-server"]),
-            &opt
+            &opt,
+            "claude",
         ));
     }
 
@@ -4285,7 +4303,22 @@ mod mcp_selection_tests {
     fn mcp_selection_rejects_unselected_servers() {
         let opt = option(".claude.json:chrome-mcp-server", "chrome-mcp-server");
 
-        assert!(!mcp_option_is_selected(&selected(&["frida-mcp"]), &opt));
+        assert!(!mcp_option_is_selected(
+            &selected(&["frida-mcp"]),
+            &opt,
+            "claude"
+        ));
+    }
+
+    #[test]
+    fn mcp_selection_rejects_wrong_tool_source() {
+        let opt = option(".claude.json:chrome-mcp-server", "chrome-mcp-server");
+
+        assert!(!mcp_option_is_selected(
+            &selected(&["chrome-mcp-server"]),
+            &opt,
+            "codex",
+        ));
     }
 }
 
@@ -4345,6 +4378,7 @@ pub fn discover_local_mcp_servers() -> Result<Vec<McpOption>, String> {
                             name: k.clone(),
                             label: format!("{} ({})", k, source),
                             source: source.to_string(),
+                            tools: mcp_source_tools(source),
                             config_json: serde_json::to_string(entry)
                                 .unwrap_or_else(|_| "{}".to_string()),
                         });
@@ -4366,6 +4400,7 @@ pub fn discover_local_mcp_servers() -> Result<Vec<McpOption>, String> {
                             name: k.clone(),
                             label: format!("{} ({})", k, source),
                             source: source.to_string(),
+                            tools: mcp_source_tools(source),
                             config_json: serde_json::to_string(entry)
                                 .unwrap_or_else(|_| "{}".to_string()),
                         });
@@ -4382,6 +4417,7 @@ pub fn discover_local_mcp_servers() -> Result<Vec<McpOption>, String> {
 
 fn load_selected_mcp_servers(
     selected_ids: &[String],
+    tool: &str,
 ) -> serde_json::Map<String, serde_json::Value> {
     let selected: HashSet<String> = selected_ids
         .iter()
@@ -4400,7 +4436,7 @@ fn load_selected_mcp_servers(
 
     let mut out = serde_json::Map::new();
     for opt in all {
-        if !mcp_option_is_selected(&selected, &opt) {
+        if !mcp_option_is_selected(&selected, &opt, tool) {
             continue;
         }
         match serde_json::from_str::<serde_json::Value>(&opt.config_json) {
@@ -4431,9 +4467,10 @@ fn is_generated_profile_mcp_path(path_str: &str) -> bool {
 
 fn load_profile_mcp_servers(
     payload: &crate::multi_agent_profiles::PaneLaunchPayload,
+    tool: &str,
 ) -> serde_json::Map<String, serde_json::Value> {
     if !payload.selected_mcp_ids.is_empty() {
-        return load_selected_mcp_servers(&payload.selected_mcp_ids);
+        return load_selected_mcp_servers(&payload.selected_mcp_ids, tool);
     }
 
     if payload.mcp_config_path.trim().is_empty()

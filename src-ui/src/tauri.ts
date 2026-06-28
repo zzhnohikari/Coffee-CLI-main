@@ -402,5 +402,6 @@ export interface McpOption {
   name: string;
   label: string;
   source: string;
+  tools: string[];
   config_json: string;
 }
