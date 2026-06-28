@@ -105,8 +105,10 @@ mod codex_workspace_tests {
 
     #[test]
     fn codex_profile_cd_uses_isolated_workspace_link() {
-        let mut paths = crate::mcp_injector::PaneConfigPaths::default();
-        paths.codex_process_home_path = Some(std::path::PathBuf::from("/tmp/coffee-pane-home"));
+        let paths = crate::mcp_injector::PaneConfigPaths {
+            codex_process_home_path: Some(std::path::PathBuf::from("/tmp/coffee-pane-home")),
+            ..Default::default()
+        };
 
         assert_eq!(
             codex_cd_arg(Some(&paths), Some("/Users/zilm")),
