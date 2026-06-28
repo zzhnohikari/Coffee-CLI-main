@@ -94,7 +94,7 @@ fn codex_cd_arg(
 ) -> Option<String> {
     let real_cwd = real_cwd.map(str::trim).filter(|s| !s.is_empty())?;
     if let Some(process_home) = pane_paths.and_then(|pp| pp.codex_process_home_path.as_ref()) {
-        return Some(process_home.join("workspace").to_string_lossy().to_string());
+        return Some(process_home.to_string_lossy().to_string());
     }
     Some(real_cwd.to_string())
 }
@@ -110,7 +110,7 @@ mod codex_workspace_tests {
 
         assert_eq!(
             codex_cd_arg(Some(&paths), Some("/Users/zilm")),
-            Some("/tmp/coffee-pane-home/workspace".to_string())
+            Some("/tmp/coffee-pane-home".to_string())
         );
     }
 
