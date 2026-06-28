@@ -88,6 +88,41 @@ fn prepare_codex_workspace_link(process_home: &Path, real_cwd: &str) {
     }
 }
 
+fn codex_cd_arg(
+    pane_paths: Option<&crate::mcp_injector::PaneConfigPaths>,
+    real_cwd: Option<&str>,
+) -> Option<String> {
+    let real_cwd = real_cwd.map(str::trim).filter(|s| !s.is_empty())?;
+    if let Some(process_home) = pane_paths.and_then(|pp| pp.codex_process_home_path.as_ref()) {
+        return Some(process_home.join("workspace").to_string_lossy().to_string());
+    }
+    Some(real_cwd.to_string())
+}
+
+#[cfg(test)]
+mod codex_workspace_tests {
+    use super::codex_cd_arg;
+
+    #[test]
+    fn codex_profile_cd_uses_isolated_workspace_link() {
+        let mut paths = crate::mcp_injector::PaneConfigPaths::default();
+        paths.codex_process_home_path = Some(std::path::PathBuf::from("/tmp/coffee-pane-home"));
+
+        assert_eq!(
+            codex_cd_arg(Some(&paths), Some("/Users/zilm")),
+            Some("/tmp/coffee-pane-home/workspace".to_string())
+        );
+    }
+
+    #[test]
+    fn codex_plain_cd_uses_real_workspace() {
+        assert_eq!(
+            codex_cd_arg(None, Some("/Users/zilm")),
+            Some("/Users/zilm".to_string())
+        );
+    }
+}
+
 fn pane_profile_overlay_root() -> std::path::PathBuf {
     std::env::temp_dir()
         .join("coffee-cli")
@@ -1224,8 +1259,16 @@ fn tier_terminal_start_blocking(
         Some("codex") => {
             let mut a = vec![];
             if let Some(real_cwd) = real_spawn_cwd.as_deref() {
+                if let Some(process_home) = pane_paths
+                    .as_ref()
+                    .and_then(|pp| pp.codex_process_home_path.as_ref())
+                {
+                    prepare_codex_workspace_link(process_home, real_cwd);
+                }
+            }
+            if let Some(cd_arg) = codex_cd_arg(pane_paths.as_ref(), real_spawn_cwd.as_deref()) {
                 a.push("--cd".to_string());
-                a.push(real_cwd.to_string());
+                a.push(cd_arg);
             }
             if let Some(payload) = pane_launch_payload.as_ref() {
                 if !payload.model.trim().is_empty() {
@@ -1249,9 +1292,9 @@ fn tier_terminal_start_blocking(
                 // delegates trust to the controlling pane's LLM.
                 a.push("--dangerously-bypass-approvals-and-sandbox".to_string());
                 // Per-pane MCP wiring via Codex's `-c key=value` config
-                // override (it merges onto `~/.codex/config.toml` rather
-                // than replacing it, so user MCP entries / API keys /
-                // auth all stay live). Two pairs:
+                // override. Codex also gets an isolated HOME/CODEX_HOME
+                // and a `workspace` symlink, so global `~/.codex/config.toml`
+                // MCP entries do not leak into profile-scoped panes. Two pairs:
                 //   `mcp_servers.coffee-cli.url='<per-pane-url>'`
                 //   `experimental_instructions_file='<pane-temp>/inst.md'`
                 // The instructions file holds the multi-agent protocol
@@ -3520,9 +3563,15 @@ fn tier_terminal_resume(
                 }
             }
             "codex" => {
-                if !cwd.trim().is_empty() {
+                if let Some(process_home) = pane_paths
+                    .as_ref()
+                    .and_then(|pp| pp.codex_process_home_path.as_ref())
+                {
+                    prepare_codex_workspace_link(process_home, &cwd);
+                }
+                if let Some(cd_arg) = codex_cd_arg(pane_paths.as_ref(), Some(&cwd)) {
                     global_args.push("--cd".to_string());
-                    global_args.push(cwd.clone());
+                    global_args.push(cd_arg);
                 }
                 if let Some(payload) = pane_launch_payload.as_ref() {
                     if !payload.model.trim().is_empty() {
