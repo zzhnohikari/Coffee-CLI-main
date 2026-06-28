@@ -228,6 +228,508 @@ fn codex_profile_config_args(
     args
 }
 
+const CCSWITCH_CODEX_PROVIDER_KEY: &str = "ccswitch_codex";
+
+#[derive(Debug, Clone, Default)]
+struct CcSwitchCodexConfig {
+    provider_id: String,
+    provider_name: String,
+    model: Option<String>,
+    model_reasoning_effort: Option<String>,
+    approval_policy: Option<String>,
+    sandbox_mode: Option<String>,
+    plan_mode_reasoning_effort: Option<String>,
+    disable_response_storage: Option<bool>,
+    base_url: Option<String>,
+    wire_api: Option<String>,
+    requires_openai_auth: Option<bool>,
+    api_key: Option<String>,
+}
+
+fn load_ccswitch_codex_config() -> Option<CcSwitchCodexConfig> {
+    let Some(home) = dirs::home_dir() else {
+        log::warn!("[cc-switch] no home directory; cannot load Codex provider");
+        return None;
+    };
+    let root = home.join(".cc-switch");
+    match load_ccswitch_codex_config_from_paths(
+        &root.join("settings.json"),
+        &root.join("cc-switch.db"),
+    ) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            log::warn!("[cc-switch] could not load Codex provider: {e}");
+            None
+        }
+    }
+}
+
+fn load_ccswitch_codex_config_from_paths(
+    settings_path: &Path,
+    db_path: &Path,
+) -> Result<Option<CcSwitchCodexConfig>, String> {
+    use rusqlite::OptionalExtension;
+
+    if !db_path.exists() {
+        return Ok(None);
+    }
+
+    let current_provider_id = std::fs::read_to_string(settings_path)
+        .ok()
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+        .and_then(|value| {
+            value
+                .get("currentProviderCodex")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+        });
+
+    let conn = rusqlite::Connection::open_with_flags(
+        db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let selected = if let Some(provider_id) = current_provider_id.as_deref() {
+        conn.query_row(
+            "SELECT id, name, settings_config FROM providers WHERE app_type = 'codex' AND id = ?1 LIMIT 1",
+            [provider_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+    } else {
+        None
+    };
+
+    let selected = match selected {
+        Some(row) => Some(row),
+        None => conn
+            .query_row(
+                "SELECT id, name, settings_config FROM providers WHERE app_type = 'codex' AND is_current = 1 LIMIT 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| e.to_string())?,
+    };
+
+    let Some((provider_id, provider_name, settings_config)) = selected else {
+        return Ok(None);
+    };
+
+    let endpoint_url = conn
+        .query_row(
+            "SELECT url FROM provider_endpoints WHERE app_type = 'codex' AND provider_id = ?1 ORDER BY id LIMIT 1",
+            [&provider_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    Ok(Some(parse_ccswitch_codex_config(
+        provider_id,
+        provider_name,
+        &settings_config,
+        endpoint_url,
+    )))
+}
+
+fn parse_ccswitch_codex_config(
+    provider_id: String,
+    provider_name: String,
+    settings_config: &str,
+    endpoint_url: Option<String>,
+) -> CcSwitchCodexConfig {
+    let root = serde_json::from_str::<serde_json::Value>(settings_config)
+        .unwrap_or_else(|_| serde_json::json!({}));
+    let api_key = root
+        .get("auth")
+        .and_then(|v| v.as_object())
+        .and_then(|auth| {
+            [
+                "OPENAI_API_KEY",
+                "openai_api_key",
+                "apiKey",
+                "api_key",
+                "key",
+            ]
+            .iter()
+            .find_map(|key| {
+                auth.get(*key)
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+            })
+        });
+
+    let config_text = root.get("config").and_then(|v| v.as_str()).unwrap_or("");
+    let parsed = toml::from_str::<toml::Value>(config_text).ok();
+    let table = parsed.as_ref().and_then(|v| v.as_table());
+    let model = table
+        .and_then(|t| t.get("model"))
+        .and_then(toml_string_value);
+    let model_reasoning_effort = table
+        .and_then(|t| t.get("model_reasoning_effort"))
+        .and_then(toml_string_value);
+    let approval_policy = table
+        .and_then(|t| t.get("approval_policy"))
+        .and_then(toml_string_value);
+    let sandbox_mode = table
+        .and_then(|t| t.get("sandbox_mode"))
+        .and_then(toml_string_value);
+    let plan_mode_reasoning_effort = table
+        .and_then(|t| t.get("plan_mode_reasoning_effort"))
+        .and_then(toml_string_value);
+    let disable_response_storage = table
+        .and_then(|t| t.get("disable_response_storage"))
+        .and_then(|v| v.as_bool());
+
+    let model_provider = table
+        .and_then(|t| t.get("model_provider"))
+        .and_then(toml_string_value);
+    let provider_table = table
+        .and_then(|t| t.get("model_providers"))
+        .and_then(|v| v.as_table())
+        .and_then(|providers| {
+            model_provider
+                .as_deref()
+                .and_then(|key| providers.get(key))
+                .or_else(|| {
+                    if providers.len() == 1 {
+                        providers.values().next()
+                    } else {
+                        None
+                    }
+                })
+        })
+        .and_then(|v| v.as_table());
+
+    let base_url = provider_table
+        .and_then(|t| t.get("base_url"))
+        .and_then(toml_string_value)
+        .or(endpoint_url)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let wire_api = provider_table
+        .and_then(|t| t.get("wire_api"))
+        .and_then(toml_string_value)
+        .or_else(|| base_url.as_ref().map(|_| "responses".to_string()));
+    let requires_openai_auth = provider_table
+        .and_then(|t| t.get("requires_openai_auth"))
+        .and_then(|v| v.as_bool())
+        .or_else(|| base_url.as_ref().map(|_| true));
+
+    CcSwitchCodexConfig {
+        provider_id,
+        provider_name,
+        model,
+        model_reasoning_effort,
+        approval_policy,
+        sandbox_mode,
+        plan_mode_reasoning_effort,
+        disable_response_storage,
+        base_url,
+        wire_api,
+        requires_openai_auth,
+        api_key,
+    }
+}
+
+fn toml_string_value(value: &toml::Value) -> Option<String> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+}
+
+fn push_config_arg(args: &mut Vec<String>, key: &str, value: String) {
+    args.push("-c".to_string());
+    args.push(format!("{key}={value}"));
+}
+
+fn quoted_toml_string(value: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}"))
+}
+
+fn ccswitch_codex_config_args(config: &CcSwitchCodexConfig) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(model) = config.model.as_deref() {
+        args.push("--model".to_string());
+        args.push(model.to_string());
+        push_config_arg(&mut args, "model", quoted_toml_string(model));
+    }
+    if let Some(value) = config.model_reasoning_effort.as_deref() {
+        push_config_arg(
+            &mut args,
+            "model_reasoning_effort",
+            quoted_toml_string(value),
+        );
+    }
+    if let Some(value) = config.approval_policy.as_deref() {
+        push_config_arg(&mut args, "approval_policy", quoted_toml_string(value));
+    }
+    if let Some(value) = config.sandbox_mode.as_deref() {
+        push_config_arg(&mut args, "sandbox_mode", quoted_toml_string(value));
+    }
+    if let Some(value) = config.plan_mode_reasoning_effort.as_deref() {
+        push_config_arg(
+            &mut args,
+            "plan_mode_reasoning_effort",
+            quoted_toml_string(value),
+        );
+    }
+    if let Some(value) = config.disable_response_storage {
+        push_config_arg(&mut args, "disable_response_storage", value.to_string());
+    }
+
+    if let Some(base_url) = config.base_url.as_deref() {
+        push_config_arg(
+            &mut args,
+            "model_provider",
+            quoted_toml_string(CCSWITCH_CODEX_PROVIDER_KEY),
+        );
+        push_config_arg(
+            &mut args,
+            &format!("model_providers.{CCSWITCH_CODEX_PROVIDER_KEY}.name"),
+            quoted_toml_string(CCSWITCH_CODEX_PROVIDER_KEY),
+        );
+        push_config_arg(
+            &mut args,
+            &format!("model_providers.{CCSWITCH_CODEX_PROVIDER_KEY}.base_url"),
+            quoted_toml_string(base_url),
+        );
+        if let Some(wire_api) = config.wire_api.as_deref() {
+            push_config_arg(
+                &mut args,
+                &format!("model_providers.{CCSWITCH_CODEX_PROVIDER_KEY}.wire_api"),
+                quoted_toml_string(wire_api),
+            );
+        }
+        if let Some(requires_auth) = config.requires_openai_auth {
+            push_config_arg(
+                &mut args,
+                &format!("model_providers.{CCSWITCH_CODEX_PROVIDER_KEY}.requires_openai_auth"),
+                requires_auth.to_string(),
+            );
+        }
+    }
+
+    args
+}
+
+fn push_or_replace_env(env: &mut Vec<(String, String)>, key: &str, value: String) {
+    if let Some((_, existing)) = env.iter_mut().find(|(k, _)| k == key) {
+        *existing = value;
+    } else {
+        env.push((key.to_string(), value));
+    }
+}
+
+fn append_ccswitch_codex_env(env: &mut Vec<(String, String)>, config: &CcSwitchCodexConfig) {
+    if let Some(api_key) = config.api_key.as_deref() {
+        push_or_replace_env(env, "OPENAI_API_KEY", api_key.to_string());
+    }
+    if let Some(base_url) = config.base_url.as_deref() {
+        push_or_replace_env(env, "OPENAI_BASE_URL", base_url.to_string());
+    }
+    if let Some(home) = dirs::home_dir() {
+        push_or_replace_env(
+            env,
+            "CODEX_HOME",
+            home.join(".codex").to_string_lossy().to_string(),
+        );
+    }
+}
+
+#[cfg(test)]
+mod ccswitch_codex_tests {
+    use super::{
+        append_ccswitch_codex_env, ccswitch_codex_config_args,
+        load_ccswitch_codex_config_from_paths, parse_ccswitch_codex_config,
+    };
+
+    fn fixture_settings_config(base_url: &str, api_key: &str, model: &str) -> String {
+        serde_json::json!({
+            "auth": {
+                "OPENAI_API_KEY": api_key
+            },
+            "config": format!(
+                r#"
+model_provider = "custom"
+model = "{model}"
+model_reasoning_effort = "xhigh"
+disable_response_storage = true
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+plan_mode_reasoning_effort = "high"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "{base_url}"
+"#
+            )
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn ccswitch_codex_parser_extracts_provider_settings() {
+        let cfg = parse_ccswitch_codex_config(
+            "provider-1".to_string(),
+            "Local".to_string(),
+            &fixture_settings_config("http://127.0.0.1:8081", "secret-value", "gpt-5.5"),
+            None,
+        );
+
+        assert_eq!(cfg.provider_id, "provider-1");
+        assert_eq!(cfg.provider_name, "Local");
+        assert_eq!(cfg.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(cfg.model_reasoning_effort.as_deref(), Some("xhigh"));
+        assert_eq!(cfg.approval_policy.as_deref(), Some("never"));
+        assert_eq!(cfg.sandbox_mode.as_deref(), Some("danger-full-access"));
+        assert_eq!(cfg.plan_mode_reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(cfg.disable_response_storage, Some(true));
+        assert_eq!(cfg.base_url.as_deref(), Some("http://127.0.0.1:8081"));
+        assert_eq!(cfg.wire_api.as_deref(), Some("responses"));
+        assert_eq!(cfg.requires_openai_auth, Some(true));
+        assert_eq!(cfg.api_key.as_deref(), Some("secret-value"));
+    }
+
+    #[test]
+    fn ccswitch_codex_args_include_provider_without_leaking_api_key() {
+        let cfg = parse_ccswitch_codex_config(
+            "provider-1".to_string(),
+            "Local".to_string(),
+            &fixture_settings_config("http://127.0.0.1:8081", "secret-value", "gpt-5.5"),
+            None,
+        );
+        let args = ccswitch_codex_config_args(&cfg);
+        let rendered = args.join(" ");
+
+        assert!(rendered.contains("--model gpt-5.5"));
+        assert!(rendered.contains("model_provider=\"ccswitch_codex\""));
+        assert!(
+            rendered.contains("model_providers.ccswitch_codex.base_url=\"http://127.0.0.1:8081\"")
+        );
+        assert!(rendered.contains("model_providers.ccswitch_codex.wire_api=\"responses\""));
+        assert!(!rendered.contains("secret-value"));
+
+        let mut env = vec![
+            ("OPENAI_API_KEY".to_string(), "stale-parent-key".to_string()),
+            (
+                "OPENAI_BASE_URL".to_string(),
+                "https://api.openai.com/v1".to_string(),
+            ),
+        ];
+        append_ccswitch_codex_env(&mut env, &cfg);
+
+        assert_eq!(
+            env.iter()
+                .find(|(k, _)| k == "OPENAI_API_KEY")
+                .map(|(_, v)| v.as_str()),
+            Some("secret-value")
+        );
+        assert_eq!(
+            env.iter()
+                .find(|(k, _)| k == "OPENAI_BASE_URL")
+                .map(|(_, v)| v.as_str()),
+            Some("http://127.0.0.1:8081")
+        );
+    }
+
+    #[test]
+    fn ccswitch_codex_loader_prefers_settings_current_provider() {
+        let dir = std::env::temp_dir().join(format!(
+            "coffee-cli-ccswitch-codex-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let settings_path = dir.join("settings.json");
+        let db_path = dir.join("cc-switch.db");
+        std::fs::write(
+            &settings_path,
+            r#"{"currentProviderCodex":"provider-from-settings"}"#,
+        )
+        .expect("settings");
+
+        let conn = rusqlite::Connection::open(&db_path).expect("db");
+        conn.execute_batch(
+            r#"
+CREATE TABLE providers (
+    id TEXT NOT NULL,
+    app_type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    settings_config TEXT NOT NULL,
+    is_current BOOLEAN NOT NULL DEFAULT 0,
+    PRIMARY KEY (id, app_type)
+);
+CREATE TABLE provider_endpoints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider_id TEXT NOT NULL,
+    app_type TEXT NOT NULL,
+    url TEXT NOT NULL
+);
+"#,
+        )
+        .expect("schema");
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, is_current) VALUES (?1, 'codex', ?2, ?3, 0)",
+            (
+                "provider-from-settings",
+                "From Settings",
+                fixture_settings_config("", "settings-secret", "gpt-5.5"),
+            ),
+        )
+        .expect("insert settings provider");
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, is_current) VALUES (?1, 'codex', ?2, ?3, 1)",
+            (
+                "provider-from-db-current",
+                "DB Current",
+                fixture_settings_config("http://wrong.local", "wrong-secret", "gpt-4"),
+            ),
+        )
+        .expect("insert db current provider");
+        conn.execute(
+            "INSERT INTO provider_endpoints (provider_id, app_type, url) VALUES (?1, 'codex', ?2)",
+            ("provider-from-settings", "http://endpoint.local/v1"),
+        )
+        .expect("endpoint");
+        drop(conn);
+
+        let cfg = load_ccswitch_codex_config_from_paths(&settings_path, &db_path)
+            .expect("load")
+            .expect("config");
+
+        assert_eq!(cfg.provider_id, "provider-from-settings");
+        assert_eq!(cfg.provider_name, "From Settings");
+        assert_eq!(cfg.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(cfg.base_url.as_deref(), Some("http://endpoint.local/v1"));
+        assert_eq!(cfg.api_key.as_deref(), Some("settings-secret"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
 fn sanitize_config_key(raw: &str) -> String {
     let mut out = String::new();
     for ch in raw.chars() {
@@ -1187,6 +1689,22 @@ fn tier_terminal_start_blocking(
         Some(dir.to_string_lossy().to_string())
     };
 
+    let ccswitch_codex_config = if tool.as_deref() == Some("codex") && pane_launch_payload.is_none()
+    {
+        let config = load_ccswitch_codex_config();
+        if let Some(cfg) = config.as_ref() {
+            log::info!(
+                "[cc-switch] applying Codex provider '{}' ({}) for plain launch; base_url={:?}",
+                cfg.provider_name,
+                cfg.provider_id,
+                cfg.base_url
+            );
+        }
+        config
+    } else {
+        None
+    };
+
     // Map the requested tool to an actual CLI command.
     let (cmd, args): (String, Vec<String>) = match tool.as_deref() {
         Some("claude") => {
@@ -1278,6 +1796,8 @@ fn tier_terminal_start_blocking(
                     a.push(payload.model.trim().to_string());
                 }
                 a.extend(codex_profile_config_args(payload));
+            } else if let Some(config) = ccswitch_codex_config.as_ref() {
+                a.extend(ccswitch_codex_config_args(config));
             }
             if in_multi_agent {
                 // Hands-free multi-agent: no human is present to click
@@ -1553,6 +2073,10 @@ fn tier_terminal_start_blocking(
                     payload.profile_id
                 );
             }
+        }
+    } else if tool.as_deref() == Some("codex") {
+        if let Some(config) = ccswitch_codex_config.as_ref() {
+            append_ccswitch_codex_env(&mut extra_env, config);
         }
     }
     if let Some(p) = pane_paths
@@ -3529,6 +4053,21 @@ fn tier_terminal_resume(
         None
     };
 
+    let ccswitch_codex_config = if tool == "codex" && pane_launch_payload.is_none() {
+        let config = load_ccswitch_codex_config();
+        if let Some(cfg) = config.as_ref() {
+            log::info!(
+                "[cc-switch] applying Codex provider '{}' ({}) for plain resume; base_url={:?}",
+                cfg.provider_name,
+                cfg.provider_id,
+                cfg.base_url
+            );
+        }
+        config
+    } else {
+        None
+    };
+
     // Build args without string interpolation: token is always a separate element,
     // never concatenated into a command string that gets split by whitespace.
     let program = resume_program.to_string();
@@ -3600,6 +4139,10 @@ fn tier_terminal_resume(
             }
             _ => {}
         }
+    } else if tool == "codex" {
+        if let Some(config) = ccswitch_codex_config.as_ref() {
+            global_args.extend(ccswitch_codex_config_args(config));
+        }
     }
     let mut args: Vec<String> = preset
         .resume_args_before
@@ -3654,6 +4197,10 @@ fn tier_terminal_resume(
                     payload.profile_id
                 );
             }
+        }
+    } else if tool == "codex" {
+        if let Some(config) = ccswitch_codex_config.as_ref() {
+            append_ccswitch_codex_env(&mut extra_env, config);
         }
     }
     if let Some(p) = pane_paths
