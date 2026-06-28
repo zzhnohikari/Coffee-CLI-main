@@ -22,4 +22,11 @@ if [ ! -d "src-ui/node_modules" ]; then
   (cd src-ui && npm install)
 fi
 
+if [ -f ".env.local" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env.local
+  set +a
+fi
+
 cargo tauri dev
