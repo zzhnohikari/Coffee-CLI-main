@@ -88,6 +88,118 @@ fn prepare_codex_workspace_link(process_home: &Path, real_cwd: &str) {
     }
 }
 
+fn coffee_cli_data_dir() -> PathBuf {
+    let dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".coffee-cli");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+fn codex_profile_sessions_root() -> PathBuf {
+    let dir = coffee_cli_data_dir().join("codex-profile-sessions");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+fn profile_codex_session_dir(profile_id: &str, session_id: &str) -> PathBuf {
+    codex_profile_sessions_root()
+        .join(sanitize_config_key(profile_id))
+        .join(sanitize_config_key(session_id))
+        .join("sessions")
+}
+
+fn link_dir(link_path: &Path, target_path: &Path) -> std::io::Result<()> {
+    let _ = std::fs::remove_file(link_path);
+    let _ = std::fs::remove_dir_all(link_path);
+    if let Some(parent) = link_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::create_dir_all(target_path)?;
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target_path, link_path)
+    }
+
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(target_path, link_path)
+    }
+}
+
+fn prepare_persistent_codex_profile_sessions(
+    process_home: &Path,
+    profile_id: &str,
+    session_id: &str,
+) {
+    let target = profile_codex_session_dir(profile_id, session_id);
+    let link = process_home.join(".codex").join("sessions");
+    if let Err(e) = link_dir(&link, &target) {
+        log::warn!(
+            "[history] failed to link Codex profile sessions {} -> {}: {}",
+            link.display(),
+            target.display(),
+            e
+        );
+    }
+}
+
+fn collect_codex_profile_session_roots() -> Vec<PathBuf> {
+    let mut roots = collect_persistent_codex_profile_session_roots();
+    roots.extend(collect_temp_codex_profile_session_roots());
+    let mut seen = HashSet::new();
+    roots.retain(|root| seen.insert(canonicalize_existing_prefix(root.clone())));
+    roots
+}
+
+fn collect_persistent_codex_profile_session_roots() -> Vec<PathBuf> {
+    let root = codex_profile_sessions_root();
+    let Ok(profile_dirs) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut roots = Vec::new();
+    for profile_entry in profile_dirs.flatten() {
+        let profile_path = profile_entry.path();
+        if !profile_path.is_dir() {
+            continue;
+        }
+        let Ok(session_dirs) = std::fs::read_dir(profile_path) else {
+            continue;
+        };
+        for session_entry in session_dirs.flatten() {
+            let sessions = session_entry.path().join("sessions");
+            if sessions.is_dir() {
+                roots.push(sessions);
+            }
+        }
+    }
+    roots
+}
+
+fn collect_temp_codex_profile_session_roots() -> Vec<PathBuf> {
+    let root = std::env::temp_dir().join("coffee-cli").join("panes");
+    let Ok(pane_dirs) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut roots = Vec::new();
+    for pane_entry in pane_dirs.flatten() {
+        let sessions = pane_entry
+            .path()
+            .join("codex-home")
+            .join(".codex")
+            .join("sessions");
+        if sessions.is_dir() {
+            roots.push(sessions);
+        }
+    }
+    roots
+}
+
+fn canonicalize_existing_prefix(path: PathBuf) -> PathBuf {
+    path.canonicalize().unwrap_or(path)
+}
+
 fn codex_cd_arg(
     pane_paths: Option<&crate::mcp_injector::PaneConfigPaths>,
     real_cwd: Option<&str>,
@@ -101,7 +213,12 @@ fn codex_cd_arg(
 
 #[cfg(test)]
 mod codex_workspace_tests {
-    use super::codex_cd_arg;
+    use super::{
+        cap_candidates, codex_cd_arg, collect_codex_profile_session_roots,
+        prepare_persistent_codex_profile_sessions, profile_codex_session_dir,
+        resolve_codex_history_cwd,
+    };
+    use std::time::{Duration, SystemTime};
 
     #[test]
     fn codex_profile_cd_uses_isolated_workspace_link() {
@@ -121,6 +238,114 @@ mod codex_workspace_tests {
         assert_eq!(
             codex_cd_arg(None, Some("/Users/zilm")),
             Some("/Users/zilm".to_string())
+        );
+    }
+
+    #[test]
+    fn codex_history_cwd_resolves_isolated_workspace_symlink() {
+        let pid = std::process::id();
+        let root = std::env::temp_dir()
+            .join("coffee-cli-test-codex-cwd")
+            .join(pid.to_string());
+        let process_home = root.join("codex-home");
+        let real_workspace = root.join("real-workspace");
+
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&process_home).unwrap();
+        std::fs::create_dir_all(&real_workspace).unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real_workspace, process_home.join("workspace")).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&real_workspace, process_home.join("workspace")).unwrap();
+
+        let expected = real_workspace
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            resolve_codex_history_cwd(process_home.to_str().unwrap()),
+            expected
+        );
+        assert_eq!(
+            resolve_codex_history_cwd(process_home.join("workspace").to_str().unwrap()),
+            expected
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cap_candidates_dedupes_and_keeps_newest_paths() {
+        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
+        let mut candidates = vec![
+            (
+                base + Duration::from_secs(1),
+                "/tmp/old.jsonl".into(),
+                "codex",
+            ),
+            (
+                base + Duration::from_secs(2),
+                "/tmp/dup.jsonl".into(),
+                "codex",
+            ),
+            (
+                base + Duration::from_secs(3),
+                "/tmp/new.jsonl".into(),
+                "codex",
+            ),
+            (
+                base + Duration::from_secs(4),
+                "/tmp/dup.jsonl".into(),
+                "codex",
+            ),
+        ];
+
+        cap_candidates(&mut candidates, 2);
+
+        let paths: std::collections::HashSet<_> = candidates
+            .iter()
+            .map(|(_, path, _)| path.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(paths.len(), 2);
+        assert!(paths.contains("/tmp/dup.jsonl"));
+        assert!(paths.contains("/tmp/new.jsonl"));
+    }
+
+    #[test]
+    fn codex_profile_sessions_are_linked_to_persistent_history() {
+        let pid = std::process::id();
+        let profile_id = format!("test-profile-{pid}");
+        let session_id = format!("test-session-{pid}");
+        let process_home = std::env::temp_dir()
+            .join("coffee-cli-test-codex-home")
+            .join(format!("{}-{}", profile_id, session_id));
+
+        let _ = std::fs::remove_dir_all(&process_home);
+        let target = profile_codex_session_dir(&profile_id, &session_id);
+        let _ = std::fs::remove_dir_all(
+            target
+                .parent()
+                .and_then(|p| p.parent())
+                .unwrap_or(target.as_path()),
+        );
+
+        prepare_persistent_codex_profile_sessions(&process_home, &profile_id, &session_id);
+
+        let linked = process_home.join(".codex").join("sessions");
+        assert!(linked.exists());
+        assert!(target.is_dir());
+        assert!(collect_codex_profile_session_roots()
+            .iter()
+            .any(|root| root == &target));
+
+        let _ = std::fs::remove_dir_all(&process_home);
+        let _ = std::fs::remove_dir_all(
+            target
+                .parent()
+                .and_then(|p| p.parent())
+                .unwrap_or(target.as_path()),
         );
     }
 }
@@ -2019,6 +2244,13 @@ fn tier_terminal_start_blocking(
         if let Some(real_cwd) = real_spawn_cwd.as_deref() {
             prepare_codex_workspace_link(process_home, real_cwd);
         }
+        if let Some(payload) = pane_launch_payload.as_ref() {
+            prepare_persistent_codex_profile_sessions(
+                process_home,
+                &payload.profile_id,
+                &session_id,
+            );
+        }
         process_spawn_cwd = Some(process_home.to_string_lossy().to_string());
     }
 
@@ -2360,6 +2592,43 @@ fn normalize_history_cwd(cwd: &str) -> String {
         .to_ascii_lowercase()
 }
 
+fn resolve_codex_history_cwd(cwd: &str) -> String {
+    let trimmed = cwd.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let path = PathBuf::from(trimmed);
+    if path.file_name().and_then(|n| n.to_str()) == Some("workspace") {
+        if let Some(parent) = path.parent() {
+            if parent.file_name().and_then(|n| n.to_str()) == Some("codex-home") {
+                if let Ok(real) = path.canonicalize() {
+                    return real.to_string_lossy().to_string();
+                }
+            }
+        }
+    }
+    if path.file_name().and_then(|n| n.to_str()) == Some("codex-home") {
+        let workspace = path.join("workspace");
+        if let Ok(real) = workspace.canonicalize() {
+            return real.to_string_lossy().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn is_codex_isolated_cwd(cwd: &str) -> bool {
+    let path = Path::new(cwd);
+    if path.file_name().and_then(|n| n.to_str()) == Some("codex-home") {
+        return true;
+    }
+    path.file_name().and_then(|n| n.to_str()) == Some("workspace")
+        && path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|n| n.to_str())
+            == Some("codex-home")
+}
+
 fn load_session_profile_metadata() -> SessionProfileMetadata {
     let path = session_profile_metadata_path();
     std::fs::read_to_string(&path)
@@ -2398,6 +2667,23 @@ fn upsert_session_profile_record(record: SessionProfileRecord) {
     }
 }
 
+fn apply_session_profile_record(session: &mut SavedSession, record: &SessionProfileRecord) {
+    session.profile_tool_data = Some(record.profile_tool_data.clone());
+    if session.tool == "codex" && is_codex_isolated_cwd(&session.cwd) {
+        session.cwd = record.cwd.clone();
+    }
+}
+
+fn session_file_matches_coffee_session(session: &SavedSession, coffee_session_id: &str) -> bool {
+    let Some(file_path) = session.file_path.as_deref() else {
+        return false;
+    };
+    let sanitized = sanitize_config_key(coffee_session_id);
+    Path::new(file_path)
+        .components()
+        .any(|component| component.as_os_str().to_string_lossy() == sanitized)
+}
+
 fn attach_profile_metadata_to_sessions(sessions: &mut [SavedSession]) {
     let meta = load_session_profile_metadata();
     if meta.records.is_empty() {
@@ -2413,7 +2699,35 @@ fn attach_profile_metadata_to_sessions(sessions: &mut [SavedSession]) {
             if let Some(record) = meta.records.iter().find(|r| {
                 r.tool == session.tool && r.native_session_token.as_deref() == Some(token)
             }) {
-                session.profile_tool_data = Some(record.profile_tool_data.clone());
+                apply_session_profile_record(session, record);
+                continue;
+            }
+        }
+
+        if let Some(record) = meta.records.iter().find(|r| {
+            r.tool == session.tool
+                && session_file_matches_coffee_session(session, &r.coffee_session_id)
+        }) {
+            apply_session_profile_record(session, record);
+            continue;
+        }
+
+        let isolated_codex_cwd = session.tool == "codex" && is_codex_isolated_cwd(&session.cwd);
+        if isolated_codex_cwd {
+            let Some(saved_ms) = parse_saved_at_millis(&session.saved_at) else {
+                continue;
+            };
+            let fallback = meta
+                .records
+                .iter()
+                .filter(|r| {
+                    r.tool == session.tool
+                        && r.started_at_ms <= saved_ms.saturating_add(10 * 60 * 1000)
+                        && saved_ms.saturating_sub(r.started_at_ms) <= 12 * 60 * 60 * 1000
+                })
+                .max_by_key(|r| r.started_at_ms);
+            if let Some(record) = fallback {
+                apply_session_profile_record(session, record);
                 continue;
             }
         }
@@ -2433,7 +2747,7 @@ fn attach_profile_metadata_to_sessions(sessions: &mut [SavedSession]) {
             })
             .max_by_key(|r| r.started_at_ms);
         if let Some(record) = fallback {
-            session.profile_tool_data = Some(record.profile_tool_data.clone());
+            apply_session_profile_record(session, record);
         }
     }
 }
@@ -2686,7 +3000,7 @@ fn parse_codex_session_jsonl(file_path: &std::path::Path) -> Option<SavedSession
             }
             if let Some(c) = payload.get("cwd").and_then(|v| v.as_str()) {
                 if !c.is_empty() {
-                    cwd = c.to_string();
+                    cwd = resolve_codex_history_cwd(c);
                 }
             }
             continue;
@@ -3040,6 +3354,7 @@ fn read_native_session(file_path: String) -> Result<String, String> {
         home.join(".claude"),
         home.join(".hermes"),
         home.join(".codex").join("sessions"),
+        codex_profile_sessions_root(),
         home.join(".gemini").join("tmp"),
         home.join(".qwen").join("projects"),
         home.join(".local").join("share").join("opencode"),
@@ -3053,6 +3368,11 @@ fn read_native_session(file_path: String) -> Result<String, String> {
             allowed.push(crate::tool_config::expand_path(&cfg));
         }
     }
+    allowed.extend(collect_codex_profile_session_roots());
+    allowed = allowed
+        .into_iter()
+        .map(canonicalize_existing_prefix)
+        .collect();
     if !allowed.iter().any(|prefix| canonical.starts_with(prefix)) {
         return Err("Access denied: path is outside allowed agent data directories".to_string());
     }
@@ -3541,6 +3861,9 @@ fn cap_history_candidates_for_tool(
     tool: &'static str,
     limit: usize,
 ) {
+    let mut seen_paths = HashSet::new();
+    candidates.retain(|(_, path, _)| seen_paths.insert(path.clone()));
+
     let mut owned: Vec<_> = candidates
         .iter()
         .filter(|(_, _, t)| *t == tool)
@@ -3558,6 +3881,19 @@ fn cap_history_candidates_for_tool(
     candidates.retain(|(_, path, t)| *t != tool || keep.contains(path));
 }
 
+fn cap_candidates(
+    candidates: &mut Vec<(std::time::SystemTime, std::path::PathBuf, &'static str)>,
+    limit: usize,
+) {
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.0));
+    let mut seen_paths = HashSet::new();
+    candidates.retain(|(_, path, _)| seen_paths.insert(path.clone()));
+    if candidates.len() <= limit {
+        return;
+    }
+    candidates.truncate(limit);
+}
+
 #[tauri::command]
 async fn get_native_history() -> Result<Vec<SavedSession>, String> {
     // Async command + spawn_blocking so the file I/O runs on a dedicated
@@ -3573,7 +3909,6 @@ fn load_native_history_blocking() -> Result<Vec<SavedSession>, String> {
     // Cap history to the N most recent entries. Keeps UI responsive when users
     // have hundreds of sessions — parsing a full jsonl/json file is expensive,
     // so we pre-select a bounded number per tool before the final global cap.
-    const HISTORY_LIMIT: usize = 30;
     const HISTORY_LIMIT_PER_TOOL: usize = 30;
 
     let mut file_candidates: Vec<(std::time::SystemTime, std::path::PathBuf, &'static str)> =
@@ -3603,8 +3938,22 @@ fn load_native_history_blocking() -> Result<Vec<SavedSession>, String> {
         // 3. Codex (depth 4: sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl)
         let codex_dir =
             crate::tool_config::history_path_for("codex", home.join(".codex").join("sessions"));
-        collect_jsonl_paths_with_mtime(codex_dir, 4, "codex", &mut file_candidates);
-        cap_history_candidates_for_tool(&mut file_candidates, "codex", HISTORY_LIMIT_PER_TOOL);
+        let mut codex_candidates = Vec::new();
+        collect_jsonl_paths_with_mtime(codex_dir, 4, "codex", &mut codex_candidates);
+        cap_candidates(&mut codex_candidates, HISTORY_LIMIT_PER_TOOL);
+        file_candidates.extend(codex_candidates);
+
+        let mut codex_profile_candidates = Vec::new();
+        for codex_profile_dir in collect_codex_profile_session_roots() {
+            collect_jsonl_paths_with_mtime(
+                codex_profile_dir,
+                4,
+                "codex",
+                &mut codex_profile_candidates,
+            );
+        }
+        cap_candidates(&mut codex_profile_candidates, HISTORY_LIMIT_PER_TOOL);
+        file_candidates.extend(codex_profile_candidates);
 
         // 4. Gemini (depth 3: tmp/<project-folder>/chats/session-*.jsonl).
         // .json (legacy) files are skipped — collect_jsonl_paths_with_mtime
@@ -3672,7 +4021,6 @@ fn load_native_history_blocking() -> Result<Vec<SavedSession>, String> {
 
     attach_profile_metadata_to_sessions(&mut result);
     result.sort_by(|a, b| b.saved_at.cmp(&a.saved_at));
-    result.truncate(HISTORY_LIMIT);
     Ok(result)
 }
 
@@ -3758,6 +4106,9 @@ fn load_message_heatmap_blocking() -> Result<Vec<HeatmapEntry>, String> {
         let codex_dir =
             crate::tool_config::history_path_for("codex", home.join(".codex").join("sessions"));
         collect_jsonl_paths_with_mtime(codex_dir, 4, "codex", &mut candidates);
+        for codex_profile_dir in collect_codex_profile_session_roots() {
+            collect_jsonl_paths_with_mtime(codex_profile_dir, 4, "codex", &mut candidates);
+        }
 
         let gemini_dir =
             crate::tool_config::history_path_for("gemini", home.join(".gemini").join("tmp"));
@@ -4214,6 +4565,9 @@ fn tier_terminal_resume(
         .and_then(|pp| pp.codex_process_home_path.as_ref())
     {
         prepare_codex_workspace_link(p, &cwd);
+        if let Some(payload) = pane_launch_payload.as_ref() {
+            prepare_persistent_codex_profile_sessions(p, &payload.profile_id, &saved_session_id);
+        }
         extra_env.push(("HOME".to_string(), p.display().to_string()));
         extra_env.push(("COFFEE_REAL_CWD".to_string(), cwd.clone()));
     }

@@ -101,6 +101,8 @@ export const zhCN = {
 
   // Session
   'session.max': '最多只能同时打开 5 个会话。',
+  'session.close_multi_agent_confirm': '确定关闭这个多智能体页面吗？正在运行的所有 pane 都会被结束。',
+  'session.close_pane_confirm': '确定关闭这个 pane 吗？当前运行的会话会被结束。',
 
   // Theme Menu
   'theme.section.color': '配色',

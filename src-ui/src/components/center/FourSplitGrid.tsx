@@ -30,8 +30,10 @@ import { useEffect, useState } from 'react';
 import { useAppState, type TerminalSession, type ToolType, type MultiAgentPane } from '../../store/app-state';
 import { TierTerminal } from './TierTerminal';
 import { ErrorBoundary } from '../common/ErrorBoundary';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import { commands } from '../../tauri';
 import { setFocusedPane } from '../../lib/pane-focus';
+import { useT } from '../../i18n/useT';
 import './MultiAgentGrid.css';
 
 interface Props {
@@ -65,7 +67,9 @@ const CWD_AGNOSTIC_TOOLS: ReadonlySet<ToolType> = new Set<ToolType>(['openclaw',
 
 export function FourSplitGrid({ tab, hasBg, bgUrl, bgType, paneCount = 4, isTabActive }: Props) {
   const { state, dispatch } = useAppState();
+  const t = useT();
   const [focusedPaneIdx, setFocusedPaneIdx] = useState<number | null>(null);
+  const [pendingClosePaneIdx, setPendingClosePaneIdx] = useState<number | null>(null);
 
   // Detect which of the 6 pane-eligible CLIs are actually installed so the
   // picker can grey out the ones the user doesn't have (same visual
@@ -130,6 +134,21 @@ export function FourSplitGrid({ tab, hasBg, bgUrl, bgType, paneCount = 4, isTabA
     }
   };
 
+  const closePane = (paneIdx: number) => {
+    const paneSessionId = `${tab.id}::split-${paneIdx}`;
+    commands.tierTerminalKill(paneSessionId).catch(() => {});
+    if (focusedPaneIdx === paneIdx) {
+      setFocusedPaneIdx(null);
+      setFocusedPane(tab.id, null);
+    }
+    dispatch({
+      type: 'SET_PANE_TOOL',
+      tabId: tab.id,
+      paneIdx,
+      tool: null,
+    });
+  };
+
   // Layout rules:
   //   - 4 panes: honor state.multiAgentLayout (2×2 vs 1×4, CSS classes)
   //   - 2 or 3 panes: forced side-by-side columns, applied via inline
@@ -190,17 +209,7 @@ export function FourSplitGrid({ tab, hasBg, bgUrl, bgType, paneCount = 4, isTabA
                 aria-label={`Close pane ${pane.paneIdx}`}
                 onClick={(e) => {
                   e.stopPropagation();
-                  commands.tierTerminalKill(paneSessionId).catch(() => {});
-                  if (focusedPaneIdx === pane.paneIdx) {
-                    setFocusedPaneIdx(null);
-                    setFocusedPane(tab.id, null);
-                  }
-                  dispatch({
-                    type: 'SET_PANE_TOOL',
-                    tabId: tab.id,
-                    paneIdx: pane.paneIdx,
-                    tool: null,
-                  });
+                  setPendingClosePaneIdx(pane.paneIdx);
                 }}
               >
                 <span className="pane-badge-num">{pane.paneIdx}</span>
@@ -241,6 +250,19 @@ export function FourSplitGrid({ tab, hasBg, bgUrl, bgType, paneCount = 4, isTabA
           </div>
         );
       })}
+      {pendingClosePaneIdx !== null && (
+        <ConfirmDialog
+          title={t('session.close_pane_confirm' as any)}
+          confirmLabel={t('action.close' as any)}
+          cancelLabel={t('profile.cancel' as any)}
+          onConfirm={() => {
+            const paneIdx = pendingClosePaneIdx;
+            setPendingClosePaneIdx(null);
+            closePane(paneIdx);
+          }}
+          onCancel={() => setPendingClosePaneIdx(null)}
+        />
+      )}
     </div>
   );
 }

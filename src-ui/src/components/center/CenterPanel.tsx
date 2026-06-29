@@ -3,6 +3,7 @@ import { focusTerminal } from '../../lib/focus-registry';
 import { ToolConfigModal } from './ToolConfigModal';
 import { ContributionHeatmap } from './ContributionHeatmap';
 import { ErrorBoundary } from '../common/ErrorBoundary';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import { useAppState, type ToolType } from '../../store/app-state';
 
 export interface RemoteHistoryItem {
@@ -692,6 +693,14 @@ export function CenterPanel() {
   };
   const [connStatus, setConnStatus] = useState<'idle' | 'connecting' | 'failed'>('idle');
   const [lastCwdByTool, setLastCwdByTool] = useState<Record<string, string>>({});
+  const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
+
+  const needsCloseConfirmation = (tool: ToolType): boolean => (
+    tool === 'two-agent'
+    || tool === 'three-agent'
+    || tool === 'multi-agent'
+    || tool === 'ctf-mode'
+  );
 
   // ── Global focus enforcer ────────────────────────────────────────────────
   // One pair of window listeners for the whole app (previously each
@@ -790,7 +799,18 @@ export function CenterPanel() {
 
   const handleCloseTab = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
+    const session = terminals.find(t => t.id === id);
+    if (session && needsCloseConfirmation(session.tool)) {
+      setPendingCloseTabId(id);
+      return;
+    }
     dispatch({ type: 'REMOVE_TERMINAL', id });
+  };
+
+  const confirmCloseTab = () => {
+    const id = pendingCloseTabId;
+    setPendingCloseTabId(null);
+    if (id) dispatch({ type: 'REMOVE_TERMINAL', id });
   };
 
   const formatCwd = (cwd: string): string => {
@@ -1749,6 +1769,15 @@ export function CenterPanel() {
           toolKey={configModalTool.key}
           toolLabel={configModalTool.label}
           onClose={() => setConfigModalTool(null)}
+        />
+      )}
+      {pendingCloseTabId && (
+        <ConfirmDialog
+          title={t('session.close_multi_agent_confirm' as any)}
+          confirmLabel={t('action.close' as any)}
+          cancelLabel={t('profile.cancel' as any)}
+          onConfirm={confirmCloseTab}
+          onCancel={() => setPendingCloseTabId(null)}
         />
       )}
     </>

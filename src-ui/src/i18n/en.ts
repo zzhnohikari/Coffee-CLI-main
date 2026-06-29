@@ -103,6 +103,8 @@ export const en = {
 
   // Session
   'session.max': 'Maximum 5 sessions can be open at once.',
+  'session.close_multi_agent_confirm': 'Close this multi-agent page? All running panes in it will be stopped.',
+  'session.close_pane_confirm': 'Close this pane? Its running session will be stopped.',
 
   // Theme Menu
   'theme.section.color': 'Colors',

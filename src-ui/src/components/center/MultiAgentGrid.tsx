@@ -29,9 +29,10 @@ import { createPortal } from 'react-dom';
 import { useAppState, type TerminalSession, type ToolType, type MultiAgentPane } from '../../store/app-state';
 import { TierTerminal } from './TierTerminal';
 import { ErrorBoundary } from '../common/ErrorBoundary';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import { commands, waitForTauriBridge, type SavedSession, type MultiAgentProfilesConfig, type MultiAgentPaneProfile, type SkillOption, type McpOption } from '../../tauri';
 import { setFocusedPane } from '../../lib/pane-focus';
-import { getHistorySnapshot, prefetchHistory, subscribeHistory } from '../../lib/history-cache';
+import { getHistorySnapshot, refreshHistory, subscribeHistory } from '../../lib/history-cache';
 import { encodePaneResumePayload } from '../../lib/pane-resume';
 import { useT } from '../../i18n/useT';
 import './MultiAgentGrid.css';
@@ -136,7 +137,9 @@ function loadingLabel(lang: string): string {
 
 export function MultiAgentGrid({ tab, hasBg, bgUrl, bgType, paneCount = 4, isTabActive }: Props) {
   const { state, dispatch } = useAppState();
+  const t = useT();
   const [focusedPaneIdx, setFocusedPaneIdx] = useState<number | null>(null);
+  const [pendingClosePaneIdx, setPendingClosePaneIdx] = useState<number | null>(null);
 
   // Detect which of the 3 coordination-eligible CLIs are actually installed
   // so the picker greys out the ones the user doesn't have (same visual
@@ -213,6 +216,21 @@ export function MultiAgentGrid({ tab, hasBg, bgUrl, bgType, paneCount = 4, isTab
 
   const onSelectTool = (paneIdx: number, tool: ToolType, toolData?: string) => {
     dispatch({ type: 'SET_PANE_TOOL', tabId: tab.id, paneIdx, tool, toolData });
+  };
+
+  const closePane = (paneIdx: number) => {
+    const paneSessionId = `${tab.id}::pane-${paneIdx}`;
+    commands.tierTerminalKill(paneSessionId).catch(() => {});
+    if (focusedPaneIdx === paneIdx) {
+      setFocusedPaneIdx(null);
+      setFocusedPane(tab.id, null);
+    }
+    dispatch({
+      type: 'SET_PANE_TOOL',
+      tabId: tab.id,
+      paneIdx,
+      tool: null,
+    });
   };
 
   // 2-pane and 3-pane coordination always render as side-by-side columns — the 2×2
@@ -293,17 +311,7 @@ export function MultiAgentGrid({ tab, hasBg, bgUrl, bgType, paneCount = 4, isTab
                   aria-label={`Close pane ${pane.paneIdx}`}
                   onClick={(e) => {
                     e.stopPropagation();
-                    commands.tierTerminalKill(paneSessionId).catch(() => {});
-                    if (focusedPaneIdx === pane.paneIdx) {
-                      setFocusedPaneIdx(null);
-                      setFocusedPane(tab.id, null);
-                    }
-                    dispatch({
-                      type: 'SET_PANE_TOOL',
-                      tabId: tab.id,
-                      paneIdx: pane.paneIdx,
-                      tool: null,
-                    });
+                    setPendingClosePaneIdx(pane.paneIdx);
                   }}
                 >
                   <span className="pane-badge-num">{pane.paneIdx}</span>
@@ -365,6 +373,19 @@ export function MultiAgentGrid({ tab, hasBg, bgUrl, bgType, paneCount = 4, isTab
           </div>
         );
       })}
+      {pendingClosePaneIdx !== null && (
+        <ConfirmDialog
+          title={t('session.close_pane_confirm' as any)}
+          confirmLabel={t('action.close' as any)}
+          cancelLabel={t('profile.cancel' as any)}
+          onConfirm={() => {
+            const paneIdx = pendingClosePaneIdx;
+            setPendingClosePaneIdx(null);
+            closePane(paneIdx);
+          }}
+          onCancel={() => setPendingClosePaneIdx(null)}
+        />
+      )}
     </div>
   );
 }
@@ -416,7 +437,7 @@ function EmptyPanePicker({
   );
 
   useEffect(() => {
-    if (historyTool) prefetchHistory();
+    if (historyTool) refreshHistory();
   }, [historyTool]);
 
   useEffect(() => {
