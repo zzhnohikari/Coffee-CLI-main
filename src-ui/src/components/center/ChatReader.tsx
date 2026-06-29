@@ -219,6 +219,7 @@ export function ChatReader({ sessionId }: { sessionId: string }) {
       currentSession.cwd,
       false,
       currentSession.profile_tool_data ?? null,
+      currentSession.file_path ?? null,
     ).catch(console.error);
   };
 

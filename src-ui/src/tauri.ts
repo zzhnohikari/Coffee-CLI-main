@@ -157,8 +157,8 @@ export const commands = {
   readNativeSession: (filePath: string) => invoke<string>('read_native_session', { filePath }),
   readOpencodeSession: (sessionId: string) =>
     invoke<string>('read_opencode_session', { sessionId }),
-  tierTerminalResume: (sessionId: string, savedSessionId: string, tool: string, sessionToken: string, cols: number, rows: number, cwd: string, sentinelEnabled?: boolean, profileToolData?: string | null) =>
-    invoke<void>('tier_terminal_resume', { sessionId, savedSessionId, tool, sessionToken, cols, rows, cwd, sentinelEnabled: sentinelEnabled ?? false, profileToolData: profileToolData ?? null }),
+  tierTerminalResume: (sessionId: string, savedSessionId: string, tool: string, sessionToken: string, cols: number, rows: number, cwd: string, sentinelEnabled?: boolean, profileToolData?: string | null, sessionFilePath?: string | null) =>
+    invoke<void>('tier_terminal_resume', { sessionId, savedSessionId, tool, sessionToken, cols, rows, cwd, sentinelEnabled: sentinelEnabled ?? false, profileToolData: profileToolData ?? null, sessionFilePath: sessionFilePath ?? null }),
   checkNetworkPort: (host: string, port: number) => invoke<boolean>('check_network_port', { host, port }),
 
   // Tool availability detection

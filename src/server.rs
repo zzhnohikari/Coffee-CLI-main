@@ -200,6 +200,87 @@ fn canonicalize_existing_prefix(path: PathBuf) -> PathBuf {
     path.canonicalize().unwrap_or(path)
 }
 
+fn is_fixed_width_digits(value: &str, width: usize) -> bool {
+    value.len() == width && value.chars().all(|c| c.is_ascii_digit())
+}
+
+fn known_codex_session_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        roots.push(crate::tool_config::history_path_for(
+            "codex",
+            home.join(".codex").join("sessions"),
+        ));
+    }
+    let cfg = crate::tool_config::get("codex").history_path;
+    if !cfg.is_empty() {
+        roots.push(crate::tool_config::expand_path(&cfg));
+    }
+    roots.push(codex_profile_sessions_root());
+    roots.extend(collect_codex_profile_session_roots());
+
+    let mut seen = HashSet::new();
+    roots
+        .into_iter()
+        .map(canonicalize_existing_prefix)
+        .filter(|root| seen.insert(root.clone()))
+        .collect()
+}
+
+fn codex_sessions_root_from_file_path(file_path: &str) -> Option<PathBuf> {
+    let trimmed = file_path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(trimmed);
+    if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+        return None;
+    }
+    let file_name = path.file_name()?.to_string_lossy();
+    if !file_name.starts_with("rollout-") {
+        return None;
+    }
+
+    let canonical = path.canonicalize().ok()?;
+    let day = canonical.parent()?;
+    let month = day.parent()?;
+    let year = month.parent()?;
+    let root = year.parent()?;
+
+    let day_name = day.file_name()?.to_string_lossy();
+    let month_name = month.file_name()?.to_string_lossy();
+    let year_name = year.file_name()?.to_string_lossy();
+    if !is_fixed_width_digits(&day_name, 2)
+        || !is_fixed_width_digits(&month_name, 2)
+        || !is_fixed_width_digits(&year_name, 4)
+    {
+        return None;
+    }
+
+    let root = root.to_path_buf();
+    let allowed = known_codex_session_roots()
+        .into_iter()
+        .any(|allowed_root| root.starts_with(allowed_root));
+    allowed.then_some(root)
+}
+
+fn prepare_codex_resume_sessions(process_home: &Path, session_file_path: Option<&str>) -> bool {
+    let Some(root) = session_file_path.and_then(codex_sessions_root_from_file_path) else {
+        return false;
+    };
+    let link = process_home.join(".codex").join("sessions");
+    if let Err(e) = link_dir(&link, &root) {
+        log::warn!(
+            "[history] failed to link Codex resume sessions {} -> {}: {}",
+            link.display(),
+            root.display(),
+            e
+        );
+        return false;
+    }
+    true
+}
+
 fn codex_cd_arg(
     pane_paths: Option<&crate::mcp_injector::PaneConfigPaths>,
     real_cwd: Option<&str>,
@@ -214,9 +295,9 @@ fn codex_cd_arg(
 #[cfg(test)]
 mod codex_workspace_tests {
     use super::{
-        cap_candidates, codex_cd_arg, collect_codex_profile_session_roots,
-        prepare_persistent_codex_profile_sessions, profile_codex_session_dir,
-        resolve_codex_history_cwd,
+        cap_candidates, codex_cd_arg, codex_sessions_root_from_file_path,
+        collect_codex_profile_session_roots, prepare_persistent_codex_profile_sessions,
+        profile_codex_session_dir, resolve_codex_history_cwd,
     };
     use std::time::{Duration, SystemTime};
 
@@ -346,6 +427,44 @@ mod codex_workspace_tests {
                 .parent()
                 .and_then(|p| p.parent())
                 .unwrap_or(target.as_path()),
+        );
+    }
+
+    #[test]
+    fn codex_sessions_root_is_derived_from_rollout_file_path() {
+        let pid = std::process::id();
+        let profile_id = format!("test-root-profile-{pid}");
+        let session_id = format!("test-root-session-{pid}");
+        let root = profile_codex_session_dir(&profile_id, &session_id);
+        let file = root
+            .join("2026")
+            .join("06")
+            .join("29")
+            .join("rollout-2026-06-29T10-04-57-019f111f-63e8-7912-8e17-6251ca007050.jsonl");
+
+        let _ = std::fs::remove_dir_all(
+            root.parent()
+                .and_then(|p| p.parent())
+                .unwrap_or(root.as_path()),
+        );
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "{}\n").unwrap();
+
+        assert_eq!(
+            codex_sessions_root_from_file_path(file.to_str().unwrap()).as_deref(),
+            Some(root.as_path())
+        );
+        assert!(codex_sessions_root_from_file_path(
+            root.join("2026/6/29/rollout-bad.jsonl")
+                .to_string_lossy()
+                .as_ref()
+        )
+        .is_none());
+
+        let _ = std::fs::remove_dir_all(
+            root.parent()
+                .and_then(|p| p.parent())
+                .unwrap_or(root.as_path()),
         );
     }
 }
@@ -4339,6 +4458,7 @@ fn tier_terminal_resume(
     cwd: String,
     sentinel_enabled: Option<bool>,
     profile_tool_data: Option<String>,
+    session_file_path: Option<String>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -4565,8 +4685,16 @@ fn tier_terminal_resume(
         .and_then(|pp| pp.codex_process_home_path.as_ref())
     {
         prepare_codex_workspace_link(p, &cwd);
-        if let Some(payload) = pane_launch_payload.as_ref() {
-            prepare_persistent_codex_profile_sessions(p, &payload.profile_id, &saved_session_id);
+        let linked_resume_sessions =
+            tool == "codex" && prepare_codex_resume_sessions(p, session_file_path.as_deref());
+        if !linked_resume_sessions {
+            if let Some(payload) = pane_launch_payload.as_ref() {
+                prepare_persistent_codex_profile_sessions(
+                    p,
+                    &payload.profile_id,
+                    &saved_session_id,
+                );
+            }
         }
         extra_env.push(("HOME".to_string(), p.display().to_string()));
         extra_env.push(("COFFEE_REAL_CWD".to_string(), cwd.clone()));
